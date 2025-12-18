@@ -76,10 +76,12 @@ class BaseUser(BaseModel):
 
 # user related types and validators
 class UserRegistrationType(BaseUser):
+    model_config = {"extra": "forbid"}
+
     email: str = Field(..., pattern=r'^[\w\.-]+@[\w\.-]+\.\w{2,4}$', description="must be a valid email address", examples=["user@example.com"])
     agree_toTermsAndPolicy: bool = Field(..., description="must be true to proceed with registration", examples=[True])
 
-def validate_registration(data: BaseUser):
+def validate_passwordmatch(data: BaseUser):
     if not re.search(r"[a-z]", data.password):
         raise ValueError("Password must contain at least one lowercase letter")
     if not re.search(r"[A-Z]", data.password):
@@ -94,9 +96,16 @@ def validate_registration(data: BaseUser):
  
 # user login and password change types
 class UserLoginType(BaseModel):
+    model_config = {"extra": "forbid"}
+
     email: str = Field(..., pattern=r'^[\w\.-]+@[\w\.-]+\.\w{2,4}$', description="must be a valid email address", examples=["user@example.com"])
     password: str = Field(..., min_length=8, description="password must be at least 8 characters long", examples=["strongpassword123"])
 
 class PasswordChangeType(BaseUser):
     pass
+
+class TokenType(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    token: str 
 
