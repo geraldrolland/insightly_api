@@ -54,6 +54,16 @@ def refresh_access_token(access_token: str):
         redis_client.rename(access_token, new_access_token)
         return new_access_token
 
+def generate_verification_link(email: str, next: str):
+    from insightly_api.main import redis_client
+    import uuid
+
+    token = str(uuid.uuid4())
+    redis_client.set(name=token, value=email, ex=7*60)
+    verification_link = f"{os.getenv("API_HOST")}/verify_email?token={token}&next={next}"
+    return verification_link
+
+
 
 
 

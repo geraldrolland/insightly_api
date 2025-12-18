@@ -107,5 +107,6 @@ class PasswordChangeType(BaseUser):
 class TokenType(BaseModel):
     model_config = {"extra": "forbid"}
 
-    token: str 
+    token: str
+    next: str 
 
