@@ -9,7 +9,7 @@ from insightly_api.dependencies import check_agreetoTermsandPolicy
 from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, validate_passwordmatch, TokenType
 from fastapi.exceptions import HTTPException
 from insightly_api.models import User
-from insightly_api.utils import hash_password, verify_access_token, refresh_access_token, generate_verification_link
+from insightly_api.utils import hash_password, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token
 from insightly_api.tasks.email import send_verification_email
 from dotenv import load_dotenv
 import os
@@ -27,7 +27,6 @@ auth_router = APIRouter(
 
 @auth_router.post("/register",  status_code=status.HTTP_201_CREATED, description="allow user to register by providing email, password and confirm password for registraton")
 async def register_user(data: Annotated[UserRegistrationType, AfterValidator(validate_passwordmatch), Depends(check_agreetoTermsandPolicy)], session: Annotated[Session, Depends(get_session)]):
-    from insightly_api.main import redis_client
 
     user = session.exec(select(User).where(User.email == data.email)).first()
     if user:
@@ -52,8 +51,19 @@ async def login_user(data: UserLoginType, session: Annotated[Session, Depends(ge
     if not hash_password(data.password) == user.hashed_password:
         raise HTTPException(status_code=400, detail="invalid email or password")
     if user.is_email_verified == False:
-        raise HTTPException(status_code=400, detail="email not verified. please verify your email before logging in")
-    return {"detail": "logged in successfully"}
+        raise HTTPException(status_code=403, detail="email not verified. please verify your email before logging in")
+    payload = {
+        "id": user.id,
+        "email": user.email
+    }
+    access_token = generate_access_token(payload)
+
+    response = {
+        "id": user.id,
+        "email": user.email,
+        "access_token": access_token
+    }
+    return response
 
 @auth_router.get("/me", status_code=status.HTTP_200_OK, description="get currently logged in user details")
 async def get_current_user(authorization: Annotated[str, Header()], session: Annotated[Session, Depends(get_session)]):

@@ -15,11 +15,17 @@ redis_client = redis.Redis(
         decode_responses=True
     )
 
-SECRET_KEY = "3817feba54774215989d0dc1c08314073a00fdac83543e70621c6daf08d34563"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
 
+origins = [
+    "http://localhost:3000",
+]
 
+app.add_middleware(CORSMiddleware(
+    allow_origins=origins,
+    allow_methods=["GET", "POST", "DELETE", "PATCH"],
+    allow_headers=["*"],
+    allow_credentials=True
+))
 
 # routers
 app.include_router(auth.auth_router)
@@ -32,7 +38,6 @@ def on_startup():
     # create database and tables
     create_db_and_tables()
 
-    # initialize redis client
 
 
 @app.on_event("shutdown")
