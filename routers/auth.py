@@ -25,7 +25,8 @@ auth_router = APIRouter(
     tags=["users"],
 )
 
-@auth_router.post("/register",  status_code=status.HTTP_201_CREATED, description="allow user to register by providing email, password and confirm password for registraton")
+@auth_router.post("/register",  
+                  status_code=status.HTTP_201_CREATED, description="allow user to register by providing email, password and confirm password for registraton")
 async def register_user(data: Annotated[UserRegistrationType, AfterValidator(validate_passwordmatch), Depends(check_agreetoTermsandPolicy)], session: Annotated[Session, Depends(get_session)]):
 
     user = session.exec(select(User).where(User.email == data.email)).first()
@@ -66,8 +67,12 @@ async def login_user(data: UserLoginType, session: Annotated[Session, Depends(ge
     return response
 
 @auth_router.get("/me", status_code=status.HTTP_200_OK, description="get currently logged in user details")
-async def get_current_user(authorization: Annotated[str, Header()], session: Annotated[Session, Depends(get_session)]):
+async def get_current_user(authorization: Annotated[str, Header()], 
+                           session: Annotated[Session, Depends(get_session)]):
     access_token = authorization.split("")[-1]
+    bearer = authorization.split("")[0]
+    if bearer != "Bearer":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="token must be a bearer type")
     try:
         data = verify_access_token(access_token)
         email = data.get("email")
@@ -86,8 +91,11 @@ async def get_current_user(authorization: Annotated[str, Header()], session: Ann
     except ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="expired token provided")
 
-@auth_router.post("/reset-password", status_code=status.HTTP_200_OK, description="allow user to provide password and confirm password for password change")
-async def reset_password(data: Annotated[PasswordChangeType, AfterValidator(validate_passwordmatch)], token: Annotated[str, Cookie()], session: Annotated[Session, Depends(get_session)]):
+@auth_router.post("/reset-password", 
+                  status_code=status.HTTP_200_OK, description="allow user to provide password and confirm password for password change")
+async def reset_password(data: Annotated[PasswordChangeType, AfterValidator(validate_passwordmatch)], 
+                         token: Annotated[str, Cookie()], 
+                         session: Annotated[Session, Depends(get_session)]):
     email = redis_client.get(token)
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="permission denied for password reset")
@@ -124,7 +132,7 @@ async def verify_email(query: Annotated[TokenType, Query()], session: Annotated[
         # assign create token with the key token in the cookie and sign 
         pass
 
-    redirect_url = f"{os.getenv("APP_HOST")}?next={query.next}"
+    redirect_url = f"{os.getenv("APP_HOST")}?next={query.next}&msg=email verified successfully"
     return RedirectResponse(redirect_url)
 
 @auth_router.get("/refresh-token", status_code=status.HTTP_200_OK, description="allows users to refresh expired access token")
