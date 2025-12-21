@@ -60,7 +60,7 @@ def generate_verification_link(email: str, next: str):
 
     token = str(uuid.uuid4())
     redis_client.set(name=token, value=email, ex=7*60)
-    verification_link = f"{os.getenv("API_HOST")}/verify_email?token={token}&next={next}"
+    verification_link = f"{os.getenv("APP_HOST")}/verify_email?token={token}&next={next}"
     return verification_link
 
 

@@ -6,7 +6,7 @@ from insightly_api.routers import auth
 import redis
 
 
-app = FastAPI()
+app = FastAPI(title="Insightly API Documentation")
 
 redis_client = redis.Redis(
         host='localhost',
@@ -20,16 +20,17 @@ origins = [
     "http://localhost:3000",
 ]
 
-app.add_middleware(CORSMiddleware(
-    allow_origins=origins,
-    allow_methods=["GET", "POST", "DELETE", "PATCH"],
-    allow_headers=["*"],
-    allow_credentials=True
-))
+# app.add_middleware(CORSMiddleware(
+#     app=app,
+#     allow_origins=origins,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+#     allow_credentials=True,
+# ))
 
 # routers
-app.include_router(auth.auth_router)
-app.include_router(projects.project_router)
+app.include_router(auth.router)
+app.include_router(projects.router)
 
 @app.on_event("startup")
 def on_startup():

@@ -1,13 +1,16 @@
 from sqlmodel import Field, SQLModel
 from datetime import timezone, datetime
 from sqlalchemy import func
-
 from enum import Enum
 
 class SourceType(str, Enum):
     file = "file"
     database = "database"
     api = "api"
+
+class DataSetStatus(str, Enum):
+    COMPLETED = "completed"
+    IN_PROGRESS = "in_progress"
 
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
@@ -36,3 +39,18 @@ class Project(SQLModel, table=True):
 
     def __repr__(self):
         return f"Project(id={self.id}, name={self.name}, datasource_type={self.datasource_type})"
+
+class DataSet(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    status: DataSetStatus = Field(default=DataSetStatus.IN_PROGRESS)
+    num_of_records: int = Field(default=0, ge=0)
+    project: int = Field(foreign_key="project.id", unique=True)
+    owner: int = Field(foreign_key="user.id")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": func.now(timezone.utc)})
+
+class DataSetRow(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    data: int
+    dataset: int = Field(foreign_key="dataset.id")

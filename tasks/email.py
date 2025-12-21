@@ -6,7 +6,6 @@ dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 
 load_dotenv(dotenv_path)
 
-print("THIS IS THE USERNAME ", os.getenv('MAIL_USERNAME'))
 
 @celery.task(name="send_verification_email")
 def send_verification_email(email: str, body: dict):

@@ -74,6 +74,11 @@ class BaseUser(BaseModel):
     password: str = Field(..., min_length=8, description="password must be at least 8 characters long", examples=["strongpassword123"])
     confirm_password: str = Field(..., min_length=8, description="password must be at least 8 characters long", examples=["strongpassword123"])
 
+class UpdateUserType(BaseModel):
+    email: str = Field(default=None, pattern=r'^[\w\.-]+@[\w\.-]+\.\w{2,4}$', description="must be a valid email address", examples=["user@example.com"])
+    password: str = Field(default=None, min_length=8, description="password must be at least 8 characters long", examples=["strongpassword123$P"])
+    confirm_password: str = Field(default=None, min_length=8, description="password must be at least 8 characters long", examples=["strongpassword123$P"])
+
 # user related types and validators
 class UserRegistrationType(BaseUser):
     model_config = {"extra": "forbid"}
@@ -82,14 +87,15 @@ class UserRegistrationType(BaseUser):
     agree_toTermsAndPolicy: bool = Field(..., description="must be true to proceed with registration", examples=[True])
 
 def validate_passwordmatch(data: BaseUser):
-    if not re.search(r"[a-z]", data.password):
-        raise ValueError("Password must contain at least one lowercase letter")
-    if not re.search(r"[A-Z]", data.password):
-        raise ValueError("Password must contain at least one uppercase letter")
-    if not re.search(r"\d", data.password):
-        raise ValueError("Password must contain at least one digit")
-    if not re.search(r"[^A-Za-z0-9]", data.password):
-        raise ValueError("Password must contain at least one special character")
+    if data.password is not None:
+        if not re.search(r"[a-z]", data.password):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not re.search(r"[A-Z]", data.password):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"\d", data.password):
+            raise ValueError("Password must contain at least one digit")
+        if not re.search(r"[^A-Za-z0-9]", data.password):
+            raise ValueError("Password must contain at least one special character")
     if data.password != data.confirm_password:
         raise ValueError("password and confirm password do not match")
     return data
@@ -108,5 +114,5 @@ class TokenType(BaseModel):
     model_config = {"extra": "forbid"}
 
     token: str
-    next: str 
+    next: str
 
