@@ -9,8 +9,8 @@ from insightly_api.dependencies import check_agreetoTermsandPolicy
 from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, validate_passwordmatch, TokenType
 from fastapi.exceptions import HTTPException
 from insightly_api.models import User
-from insightly_api.utils import hash_password, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token
-from insightly_api.tasks.email import send_verification_email
+from insightly_api.utils import hash_password, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token, generate_otp
+from insightly_api.tasks.email import send_verification_email, send_otp_email
 from dotenv import load_dotenv
 import os
 import uuid
@@ -46,6 +46,8 @@ async def register_user(data: Annotated[UserRegistrationType, AfterValidator(val
                   status_code=status.HTTP_200_OK, 
                   description="allow user to log in by providing email and password as authentication credential")
 async def login_user(data: UserLoginType, session: Annotated[Session, Depends(get_session)]):
+    from insightly_api.main import redis_client
+
     user = session.exec(select(User).where(User.email == data.email)).first()
     if not user:
         raise HTTPException(status_code=400, detail="invalid email or password")
@@ -56,6 +58,16 @@ async def login_user(data: UserLoginType, session: Annotated[Session, Depends(ge
         body = {"verification_link": verification_link}
         send_verification_email.delay(user.email, body)
         raise HTTPException(status_code=403, detail="a verification link has been sent your email. verify email email before logging in")
+    if user.is_MFA_enabled:
+        otp_code = generate_otp(length=6)
+        key = str(uuid.uuid3())
+        redis_client.set(name=key, value=otp_code, ex=2*60)
+        # set key as otp_token in cookie 
+        body = {"otp": otp_code}
+        send_otp_email.delay(user.email, body)
+        redirect_url = f"{os.getenv("APP_HOST")}/otp-verification"
+        return RedirectResponse(redirect_url) 
+        
     payload = {
         "id": user.id,
         "email": user.email
@@ -123,6 +135,7 @@ async def user_email(email: Annotated[str, Body(embed=True, pattern=r'^[\w\.-]+@
     send_verification_email.delay(email, body)
     return {"detail": "verification link has been set to the email successfully"}
 
+
 @router.get("/verify-email", status_code=status.HTTP_200_OK, description="verifies user email from the provided token")
 async def verify_email(query: Annotated[TokenType, Query()], session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
@@ -143,10 +156,7 @@ async def verify_email(query: Annotated[TokenType, Query()], session: Annotated[
     return {"detail": "email verified successfully"}
 
 @router.get("/refresh-token", status_code=status.HTTP_200_OK, description="allows users to refresh expired access token")
-async def refresh_token(Authorization: Annotated[str, Header()] = None):
-    print(Authorization)
-    if not Authorization:
-        raise HTTPException(status_code=400, detail="Authorization header missing")
+async def refresh_token(Authorization: Annotated[str, Header()]):
     access_token = Authorization.split("")[-1]
     if not access_token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="token missing in authorization header")
@@ -161,5 +171,59 @@ async def refresh_token(Authorization: Annotated[str, Header()] = None):
     
     return {"access_token": access_token}
 
+@router.post("/verify-otp", status_code=200, description="verify the provided otp code")
+def verify_otp(otp_code: Annotated[str, Body(embed=True)], 
+               otp_token: Annotated[str, Cookie()], 
+               email: Annotated[str, Cookie()], 
+               session: Annotated[Session, Depends(get_session)]):
+    from insightly_api.main import redis_client
+
+    otp = redis_client.get(otp_token)
+    if not otp:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="cannot process provided otp. otp expired")
+    if otp != otp_code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid otp provided")
+    user = session.exec(select(User).where(User.email == email)).first()
+    payload = {
+        "id": user.id,
+        "email": user.email
+    }
+    access_token = generate_access_token(payload)
+    return {
+        "id": user.id,
+        "email": user.email,
+        "access_token": access_token
+    }
+
+@router.get("/resend-otp", status_code=status.HTTP_200_OK, description="resend new otp to users")
+def resend_otp(email: Annotated[str, Cookie()], 
+               session: Annotated[Session, Depends(get_session)], 
+               otp_token: Annotated[str, Cookie()]):
+    from insightly_api.main import redis_client
+
+    otp = redis_client.get(otp_token)
+    if otp:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot process. current otp code has not expired")
+    user = session.exec(select(User).where(User.email == email)).first()
+    otp_code = generate_otp(length=6)
+    key = str(uuid.uuid3())
+    redis_client.set(name=key, value=otp_code, ex=2*60)
+    # set key with name otp_token in cookie
+    body = {"otp": otp_code}
+    send_otp_email.delay(user.email, body)
+    return {"detail": "otp sent successfully"}
+
+@router.get("/enable-MFA", status_code=status.HTTP_200_OK, description="enable multifactor authentication")
+def enable_MFA():
+    pass
+    
+@router.get("/disable-MFA", status_code=status.HTTP_200_OK, description="disable multifactor authentication")
+def disable_MFA():
+    pass
+
+@router.get("/status-MFA", status_code=status.HTTP_200_OK, description="multifactor authentication status")
+def status_MFA():
+    pass
+    
 
     

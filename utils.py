@@ -3,7 +3,7 @@ import jwt
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import os
-
+from random import choice
 
 load_dotenv(".env")
 
@@ -63,6 +63,15 @@ def generate_verification_link(email: str, next: str):
     verification_link = f"{os.getenv("APP_HOST")}/verify_email?token={token}&next={next}"
     return verification_link
 
+def generate_otp(length: int):
+    digit = ["0", "1", "2", "3",
+             "4", "5","6", "7","8", "9"
+             ]
+    otp = ""
+    for i in range(length):
+        i = choice(digit)
+        otp += i
+    return otp
 
 
 
