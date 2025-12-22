@@ -6,6 +6,7 @@ from insightly_api.routers import auth
 import redis
 
 
+
 app = FastAPI(title="Insightly API Documentation")
 
 redis_client = redis.Redis(
@@ -35,8 +36,6 @@ app.include_router(projects.router)
 @app.on_event("startup")
 def on_startup():
     from .db_config import create_db_and_tables
-
-    # create database and tables
     create_db_and_tables()
 
 

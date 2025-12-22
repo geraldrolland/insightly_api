@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Header, Query, Cookie
+from fastapi import APIRouter, Body, Header, Query, Cookie, Response
 from fastapi.responses import RedirectResponse
 from typing import Annotated
 from pydantic import AfterValidator
@@ -9,8 +9,8 @@ from insightly_api.dependencies import check_agreetoTermsandPolicy
 from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, validate_passwordmatch, TokenType
 from fastapi.exceptions import HTTPException
 from insightly_api.models import User
-from insightly_api.utils import hash_password, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token, generate_otp
-from insightly_api.tasks.email import send_verification_email, send_otp_email
+from insightly_api.utils import hash_password, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token, generate_otp, verify_password, sign_cookie, verify_signed_cookie
+from insightly_api.tasks.email import send_verification_email, send_otp_email, send_welcome_email
 from dotenv import load_dotenv
 import os
 import uuid
@@ -37,21 +37,20 @@ async def register_user(data: Annotated[UserRegistrationType, AfterValidator(val
     session.add(user)
     session.commit()
     session.refresh(user)
-    verification_link = generate_verification_link(data.email, "login")
-    body = {"verification_link": verification_link}
-    send_verification_email.delay(user.email, body)    
+    send_welcome_email.delay(user.email)   
     return {"detail": "user registered successfully"}
 
 @router.post("/login", 
                   status_code=status.HTTP_200_OK, 
                   description="allow user to log in by providing email and password as authentication credential")
-async def login_user(data: UserLoginType, session: Annotated[Session, Depends(get_session)]):
+async def login_user(data: UserLoginType,  session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
 
     user = session.exec(select(User).where(User.email == data.email)).first()
     if not user:
         raise HTTPException(status_code=400, detail="invalid email or password")
-    if not hash_password(data.password) == user.hashed_password:
+    if not verify_password(data.password, user.hashed_password):
+        print("hashed password ", hash_password(data.password))
         raise HTTPException(status_code=400, detail="invalid email or password")
     if user.is_email_verified == False:
         verification_link = generate_verification_link(user.email, next="login")
@@ -60,13 +59,17 @@ async def login_user(data: UserLoginType, session: Annotated[Session, Depends(ge
         raise HTTPException(status_code=403, detail="a verification link has been sent your email. verify email email before logging in")
     if user.is_MFA_enabled:
         otp_code = generate_otp(length=6)
-        key = str(uuid.uuid3())
+        key = str(uuid.uuid4())
         redis_client.set(name=key, value=otp_code, ex=2*60)
         # set key as otp_token in cookie 
         body = {"otp": otp_code}
         send_otp_email.delay(user.email, body)
+        signed_email = sign_cookie(user.email)
         redirect_url = f"{os.getenv("APP_HOST")}/otp-verification"
-        return RedirectResponse(redirect_url) 
+        response = RedirectResponse(redirect_url)
+        response.set_cookie(key="otp_token", value=key, httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), samesite=os.getenv("COOKIE_SAMESITE"))
+        response.set_cookie(key="email", value=signed_email, httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), samesite=os.getenv("COOKIE_SAMESITE"))
+        return response
         
     payload = {
         "id": user.id,
@@ -84,8 +87,8 @@ async def login_user(data: UserLoginType, session: Annotated[Session, Depends(ge
 @router.get("/me", status_code=status.HTTP_200_OK, description="get currently logged in user details")
 async def get_current_user(Authorization: Annotated[str, Header()], 
                            session: Annotated[Session, Depends(get_session)]):
-    access_token = Authorization.split("")[-1]
-    bearer = Authorization.split("")[0]
+    access_token = Authorization.split(" ")[-1]
+    bearer = Authorization.split(" ")[0]
     if bearer != "Bearer":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="token must be a bearer type")
     try:
@@ -109,11 +112,15 @@ async def get_current_user(Authorization: Annotated[str, Header()],
 @router.post("/reset-password", 
                   status_code=status.HTTP_200_OK, description="allow user to provide password and confirm password for password change")
 async def reset_password(data: Annotated[PasswordChangeType, AfterValidator(validate_passwordmatch)], 
-                         token: Annotated[str, Cookie()], 
+                         allow_pswd_reset_token: Annotated[str, Cookie()], 
                          session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
 
-    email = redis_client.get(token)
+    try:
+        allow_pswd_reset_token = verify_signed_cookie(allow_pswd_reset_token, max_age=10*60)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="permission denied for a password reset")
+    email = redis_client.get(allow_pswd_reset_token)
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="permission denied for a password reset")
     user = session.exec(select(User).where(User.email == email)).first()
@@ -121,7 +128,7 @@ async def reset_password(data: Annotated[PasswordChangeType, AfterValidator(vali
     user.hashed_password = hashed_pswd
     session.add(user)
     session.commit()
-    redis_client.delete(token)
+    redis_client.delete(allow_pswd_reset_token)
     return {"detail": "password changed succesfully"}
 
 @router.post("/email", status_code=status.HTTP_200_OK, 
@@ -137,7 +144,8 @@ async def user_email(email: Annotated[str, Body(embed=True, pattern=r'^[\w\.-]+@
 
 
 @router.get("/verify-email", status_code=status.HTTP_200_OK, description="verifies user email from the provided token")
-async def verify_email(query: Annotated[TokenType, Query()], session: Annotated[Session, Depends(get_session)]):
+async def verify_email(query: Annotated[TokenType, Query()],
+                       session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
 
     email = redis_client.get(query.token)
@@ -151,17 +159,28 @@ async def verify_email(query: Annotated[TokenType, Query()], session: Annotated[
         session.commit()
         
     if query.next == "reset-password":
-        # add a token to cookie to allow password reset functionality
-        pass
+        password_reset_token = str(uuid.uuid4())
+        signed_password_reset_token = sign_cookie(password_reset_token)
+        redis_client.set(name=password_reset_token, value=email, ex=10*60)
+        redirect_url = f"{os.getenv('APP_HOST')}?auth_state=reset-password"
+        response = RedirectResponse(redirect_url)
+        response.set_cookie(key="allow_pswd_reset_token", value=signed_password_reset_token, httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), samesite=os.getenv("COOKIE_SAMESITE"))
+        return response
+    
     return {"detail": "email verified successfully"}
 
 @router.get("/refresh-token", status_code=status.HTTP_200_OK, description="allows users to refresh expired access token")
 async def refresh_token(Authorization: Annotated[str, Header()]):
-    access_token = Authorization.split("")[-1]
+    Bearer = Authorization.split(" ")[0]
+    if Bearer != "Bearer":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="token must be a bearer type")
+    access_token = Authorization.split(" ")[-1]
     if not access_token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="token missing in authorization header")
     try:
         access_token = refresh_access_token(access_token)
+        if not access_token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unable to refresh access token. access token may not have expired yet")
     except ExpiredRefreshTokenError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="refresh token expired")
     except InvalidTokenError:
@@ -206,7 +225,7 @@ def resend_otp(email: Annotated[str, Cookie()],
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot process. current otp code has not expired")
     user = session.exec(select(User).where(User.email == email)).first()
     otp_code = generate_otp(length=6)
-    key = str(uuid.uuid3())
+    key = str(uuid.uuid4())
     redis_client.set(name=key, value=otp_code, ex=2*60)
     # set key with name otp_token in cookie
     body = {"otp": otp_code}
