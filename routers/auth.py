@@ -5,7 +5,7 @@ from pydantic import AfterValidator
 from fastapi import status, Depends
 from sqlmodel import Session, select
 from insightly_api.dependencies import get_session
-from insightly_api.dependencies import check_agreetoTermsandPolicy
+from insightly_api.dependencies import check_agreetoTermsandPolicy, authenticate_user
 from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, validate_passwordmatch, TokenType
 from fastapi.exceptions import HTTPException
 from insightly_api.models import User
@@ -16,7 +16,7 @@ import os
 import uuid
 from jwt.exceptions import InvalidTokenError, DecodeError, ExpiredSignatureError 
 from insightly_api.exceptions import ExpiredRefreshTokenError
-
+from fastapi import Request
 
 load_dotenv('.env')
 
@@ -43,14 +43,15 @@ async def register_user(data: Annotated[UserRegistrationType, AfterValidator(val
 @router.post("/login", 
                   status_code=status.HTTP_200_OK, 
                   description="allow user to log in by providing email and password as authentication credential")
-async def login_user(data: UserLoginType,  session: Annotated[Session, Depends(get_session)]):
+async def login_user(data: UserLoginType, 
+                     response: Response, 
+                     session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
 
     user = session.exec(select(User).where(User.email == data.email)).first()
     if not user:
         raise HTTPException(status_code=400, detail="invalid email or password")
     if not verify_password(data.password, user.hashed_password):
-        print("hashed password ", hash_password(data.password))
         raise HTTPException(status_code=400, detail="invalid email or password")
     if user.is_email_verified == False:
         verification_link = generate_verification_link(user.email, next="login")
@@ -64,53 +65,55 @@ async def login_user(data: UserLoginType,  session: Annotated[Session, Depends(g
         # set key as otp_token in cookie 
         body = {"otp": otp_code}
         send_otp_email.delay(user.email, body)
-        signed_email = sign_cookie(user.email)
-        redirect_url = f"{os.getenv("APP_HOST")}/otp-verification"
+        redirect_url = f"{os.getenv("APP_HOST")}?auth_state=otp-verification"
         response = RedirectResponse(redirect_url)
-        response.set_cookie(key="otp_token", value=key, httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), samesite=os.getenv("COOKIE_SAMESITE"))
-        response.set_cookie(key="email", value=signed_email, httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), samesite=os.getenv("COOKIE_SAMESITE"))
+        response.set_cookie(key="otp_token", 
+                            value=key, 
+                            httponly=True, 
+                            secure=bool(os.getenv("COOKIE_SECURE")), 
+                            samesite=os.getenv("COOKIE_SAMESITE"),
+                            max_age=120
+                            )
+
+        response.set_cookie(key="email", 
+                            value=user.email, 
+                            httponly=True, 
+                            secure=bool(os.getenv("COOKIE_SECURE")), 
+                            samesite=os.getenv("COOKIE_SAMESITE"))
         return response
-        
+    
     payload = {
         "id": user.id,
         "email": user.email
     }
     access_token = generate_access_token(payload)
 
-    response = {
+    response.set_cookie(key="access_token", 
+                        value=sign_cookie(access_token),
+                        httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
+                        samesite=os.getenv("COOKIE_SAMESITE"))
+
+    return {
         "id": user.id,
         "email": user.email,
-        "access_token": access_token
+    }
+
+
+@router.get("/me", 
+            status_code=status.HTTP_200_OK, 
+            description="get currently logged in user details",
+            dependencies=[Depends(authenticate_user)]
+            )
+async def get_current_user(request: Request):
+    response = {
+        "id": request.state.auth_user.id,
+        "email": request.state.auth_user.email,
     }
     return response
 
-@router.get("/me", status_code=status.HTTP_200_OK, description="get currently logged in user details")
-async def get_current_user(Authorization: Annotated[str, Header()], 
-                           session: Annotated[Session, Depends(get_session)]):
-    access_token = Authorization.split(" ")[-1]
-    bearer = Authorization.split(" ")[0]
-    if bearer != "Bearer":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="token must be a bearer type")
-    try:
-        data = verify_access_token(access_token)
-        email = data.get("email")
-        user = session.exec(select(User).where(User.email == email)).first()
-        if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user does not exist")
-        response = {
-            "id": user.id,
-            "email": user.email
-        }
-        return response
-    except InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid token provided")
-    except DecodeError:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="unable to decode token")
-    except ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="expired token provided")
-
 @router.post("/reset-password", 
-                  status_code=status.HTTP_200_OK, description="allow user to provide password and confirm password for password change")
+                  status_code=status.HTTP_200_OK, 
+                  description="allow user to provide password and confirm password for password change")
 async def reset_password(data: Annotated[PasswordChangeType, AfterValidator(validate_passwordmatch)], 
                          allow_pswd_reset_token: Annotated[str, Cookie()], 
                          session: Annotated[Session, Depends(get_session)]):
@@ -169,26 +172,6 @@ async def verify_email(query: Annotated[TokenType, Query()],
     
     return {"detail": "email verified successfully"}
 
-@router.get("/refresh-token", status_code=status.HTTP_200_OK, description="allows users to refresh expired access token")
-async def refresh_token(Authorization: Annotated[str, Header()]):
-    Bearer = Authorization.split(" ")[0]
-    if Bearer != "Bearer":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="token must be a bearer type")
-    access_token = Authorization.split(" ")[-1]
-    if not access_token:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="token missing in authorization header")
-    try:
-        access_token = refresh_access_token(access_token)
-        if not access_token:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unable to refresh access token. access token may not have expired yet")
-    except ExpiredRefreshTokenError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="refresh token expired")
-    except InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid token provided")
-    except DecodeError:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="unable to decode token")
-    
-    return {"access_token": access_token}
 
 @router.post("/verify-otp", status_code=200, description="verify the provided otp code")
 def verify_otp(otp_code: Annotated[str, Body(embed=True)], 
@@ -215,7 +198,8 @@ def verify_otp(otp_code: Annotated[str, Body(embed=True)],
     }
 
 @router.get("/resend-otp", status_code=status.HTTP_200_OK, description="resend new otp to users")
-def resend_otp(email: Annotated[str, Cookie()], 
+def resend_otp(email: Annotated[str, Cookie()],
+               response: Response, 
                session: Annotated[Session, Depends(get_session)], 
                otp_token: Annotated[str, Cookie()]):
     from insightly_api.main import redis_client
@@ -224,25 +208,60 @@ def resend_otp(email: Annotated[str, Cookie()],
     if otp:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot process. current otp code has not expired")
     user = session.exec(select(User).where(User.email == email)).first()
+    if user.is_MFA_enabled == False:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is not enabled for this user")
     otp_code = generate_otp(length=6)
     key = str(uuid.uuid4())
     redis_client.set(name=key, value=otp_code, ex=2*60)
-    # set key with name otp_token in cookie
+    response.set_cookie(key="otp_token", 
+                        value=key, 
+                        httponly=True, 
+                        secure=bool(os.getenv("COOKIE_SECURE")), 
+                        samesite=os.getenv("COOKIE_SAMESITE"))
     body = {"otp": otp_code}
     send_otp_email.delay(user.email, body)
     return {"detail": "otp sent successfully"}
 
-@router.get("/enable-MFA", status_code=status.HTTP_200_OK, description="enable multifactor authentication")
-def enable_MFA():
-    pass
+@router.get("/enable-MFA", 
+            status_code=status.HTTP_200_OK, 
+            description="enable multifactor authentication",
+            dependencies=[Depends(authenticate_user)]
+            )
+def enable_MFA(request: Request, session: Annotated[Session, Depends(get_session)]):
+    user = request.state.auth_user
+    if user.is_MFA_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is already enabled for this user")
+    user.is_MFA_enabled = True
+    session.add(user)
+    session.commit()
+    return {"detail": "multifactor authentication enabled successfully"}
+    
     
 @router.get("/disable-MFA", status_code=status.HTTP_200_OK, description="disable multifactor authentication")
-def disable_MFA():
-    pass
+def disable_MFA(request: Request, session: Annotated[Session, Depends(get_session)]):
+    user = request.state.auth_user
+    if not user.is_MFA_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is already disabled for this user")
+    user.is_MFA_enabled = False
+    session.add(user)
+    session.commit()
+    return {"detail": "multifactor authentication disabled successfully"}
 
 @router.get("/status-MFA", status_code=status.HTTP_200_OK, description="multifactor authentication status")
-def status_MFA():
-    pass
+def status_MFA(request: Request):
+    user = request.state.auth_user
+    return {"is_MFA_enabled": user.is_MFA_enabled}
+
+@router.get("/logout", 
+            status_code=status.HTTP_200_OK, 
+            description="log out currently logged in user by deleting access token cookie")
+def logout_user(request: Request, response: Response):
+    from insightly_api.main import redis_client
+    refresh_token = redis_client.get(verify_signed_cookie(request.cookies.get("access_token")))
+    redis_client.delete(refresh_token)
+    redis_client.delete(verify_signed_cookie(request.cookies.get("access_token")))
+    response.delete_cookie(key="access_token")
+    return {"detail": "user logged out successfully"}
     
 
     

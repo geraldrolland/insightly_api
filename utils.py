@@ -42,7 +42,7 @@ def generate_access_token(data: dict):
     to_encode.update({"exp": expire})
     access_token = jwt.encode(to_encode, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
     refresh_token = str(uuid.uuid4())
-    redis_client.set(name=refresh_token, ex=3600*24*3, value=str(data))
+    redis_client.set(name=refresh_token, ex=3600*24*3, value=str(to_encode))
     redis_client.set(name=access_token, value=refresh_token)
     return access_token
 
@@ -54,19 +54,23 @@ def refresh_access_token(access_token: str):
     from jwt.exceptions import ExpiredSignatureError
     from insightly_api.main import redis_client
     from .exceptions import ExpiredRefreshTokenError
+    import uuid
 
-    try:
-        verify_access_token(access_token)
-    except ExpiredSignatureError:
-        refresh_token = redis_client.get(access_token)
-        payload = redis_client.get(refresh_token)
-        if not payload:
-            raise ExpiredRefreshTokenError()
-        expire = datetime.now() + timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")))
-        payload["exp"] = expire
-        new_access_token = jwt.encode(payload, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
-        redis_client.rename(access_token, new_access_token)
-        return new_access_token
+    refresh_token = redis_client.get(access_token)
+    payload = redis_client.get(refresh_token)
+    if not payload:
+        raise ExpiredRefreshTokenError()
+    expire = datetime.now() + timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")))
+    payload["exp"] = expire
+    new_access_token = jwt.encode(payload, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
+    new_refresh_token = str(uuid.uuid4())
+    redis_client.set(name=new_refresh_token, ex=3600*24*3, value=str(payload.pop("exp")))
+    redis_client.set(name=new_access_token, value=new_refresh_token)
+
+    redis_client.delete(access_token)
+    redis_client.delete(refresh_token)
+
+    return new_access_token
 
 def generate_verification_link(email: str, next: str):
     from insightly_api.main import redis_client
