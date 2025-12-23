@@ -87,15 +87,15 @@ class UserRegistrationType(BaseUser):
     agree_toTermsAndPolicy: bool = Field(..., description="must be true to proceed with registration", examples=[True])
 
 def validate_passwordmatch(data: BaseUser):
-    if data.password is not None:
-        if not re.search(r"[a-z]", data.password):
-            raise ValueError("Password must contain at least one lowercase letter")
-        if not re.search(r"[A-Z]", data.password):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"\d", data.password):
-            raise ValueError("Password must contain at least one digit")
-        if not re.search(r"[^A-Za-z0-9]", data.password):
-            raise ValueError("Password must contain at least one special character")
+
+    if not re.search(r"[a-z]", data.password):
+        raise ValueError("Password must contain at least one lowercase letter")
+    if not re.search(r"[A-Z]", data.password):
+        raise ValueError("Password must contain at least one uppercase letter")
+    if not re.search(r"\d", data.password):
+        raise ValueError("Password must contain at least one digit")
+    if not re.search(r"[^A-Za-z0-9]", data.password):
+        raise ValueError("Password must contain at least one special character")
     if data.password != data.confirm_password:
         raise ValueError("password and confirm password do not match")
     return data

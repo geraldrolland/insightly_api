@@ -36,13 +36,15 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def generate_access_token(data: dict):
     from insightly_api.main import redis_client
     import uuid
+    import json
 
     to_encode = data.copy()
     expire = datetime.now() + timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")))
     to_encode.update({"exp": expire})
     access_token = jwt.encode(to_encode, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
     refresh_token = str(uuid.uuid4())
-    redis_client.set(name=refresh_token, ex=3600*24*3, value=str(to_encode))
+    to_encode.pop("exp")
+    redis_client.set(name=refresh_token, ex=3600*24*3, value=json.dumps(to_encode))
     redis_client.set(name=access_token, value=refresh_token)
     return access_token
 
@@ -51,17 +53,17 @@ def verify_access_token(token: str):
     return payload
 
 def refresh_access_token(access_token: str):
-    from jwt.exceptions import ExpiredSignatureError
     from insightly_api.main import redis_client
     from .exceptions import ExpiredRefreshTokenError
     import uuid
+    import json
 
     refresh_token = redis_client.get(access_token)
-    payload = redis_client.get(refresh_token)
+    payload = json.loads(redis_client.get(refresh_token)) if refresh_token else None
     if not payload:
         raise ExpiredRefreshTokenError()
     expire = datetime.now() + timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")))
-    payload["exp"] = expire
+    payload.update({"exp": expire})
     new_access_token = jwt.encode(payload, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
     new_refresh_token = str(uuid.uuid4())
     redis_client.set(name=new_refresh_token, ex=3600*24*3, value=str(payload.pop("exp")))
@@ -78,8 +80,7 @@ def generate_verification_link(email: str, next: str):
 
     token = str(uuid.uuid4())
     redis_client.set(name=token, value=email, ex=7*60)
-    verification_link = f"{os.getenv("APP_HOST")}/verify_email?token={token}&next={next}"
-    print(verification_link)
+    verification_link = f"{os.getenv('APP_HOST')}/verify_email?token={token}&next={next}"
     return verification_link
 
 def generate_otp(length: int):

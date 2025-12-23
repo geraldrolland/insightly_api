@@ -8,7 +8,7 @@ from insightly_api.dependencies import get_session
 from insightly_api.dependencies import check_agreetoTermsandPolicy, authenticate_user
 from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, validate_passwordmatch, TokenType
 from fastapi.exceptions import HTTPException
-from insightly_api.models import User
+from insightly_api.models.user_model import User
 from insightly_api.utils import hash_password, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token, generate_otp, verify_password, sign_cookie, verify_signed_cookie
 from insightly_api.tasks.email import send_verification_email, send_otp_email, send_welcome_email
 from dotenv import load_dotenv

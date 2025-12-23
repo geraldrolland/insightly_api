@@ -19,7 +19,7 @@ async def authenticate_user(request: Request, response: Response, session: Annot
     from insightly_api.utils import verify_access_token, refresh_access_token, verify_signed_cookie, sign_cookie
     from fastapi.exceptions import HTTPException
     from jwt.exceptions import ExpiredSignatureError
-    from .models import User
+    from .models.user_model import User
     from insightly_api.exceptions import ExpiredRefreshTokenError
     from dotenv import load_dotenv
     import os
