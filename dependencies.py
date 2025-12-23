@@ -1,7 +1,7 @@
 from insightly_api.utils import verify_signed_cookie
 from .type import UserRegistrationType, Annotated
 from fastapi.exceptions import HTTPException
-from .db_config import engine
+from .db_config import get_engine
 from sqlmodel import  Session, select
 from fastapi import Request, Response, Depends
 
@@ -11,7 +11,7 @@ async def check_agreetoTermsandPolicy(data: UserRegistrationType):
     return data
 
 async def get_session():
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         yield session
 
 

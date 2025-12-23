@@ -35,8 +35,15 @@ app.include_router(projects.router)
 
 @app.on_event("startup")
 def on_startup():
-    from .db_config import create_db_and_tables
-    create_db_and_tables()
+    from sqlmodel import SQLModel
+    from .db_config import get_engine
+    from dotenv import load_dotenv
+    import os
+
+    load_dotenv(".env")
+
+    if os.getenv("ENVIRONMENT") == "dev":
+        SQLModel.metadata.create_all(get_engine())
 
 
 

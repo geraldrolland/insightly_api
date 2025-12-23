@@ -4,16 +4,28 @@ from insightly_api.dependencies import get_session
 from insightly_api.models.user_model import User
 from sqlmodel import select
 import os
+from dotenv import load_dotenv
+from pathlib import Path
+from insightly_api.db_config import get_engine,  SQLModel
+
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(env_path)
+os.environ["ENVIRONMENT"] = "test"
+engine = get_engine()
+
+
 
 
 
 class TestRegisterEndpoint(TestCase):
     def setUp(self):
         from insightly_api.main import app
+        from sqlmodel import  Session
+        
 
-        print("Setting up TestClient and test database session...")
+        SQLModel.metadata.create_all(engine)
         self.client = TestClient(app)
-        self.session = get_session()
+        self.session = Session(engine)
         self.select = select
         self.model = User
         self.api_url = "/api/v1/auth/register"
@@ -48,7 +60,7 @@ class TestRegisterEndpoint(TestCase):
             "agree_toTermsAndPolicy": True
         }
         response = self.client.post(self.api_url, json=payload)
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 422)
 
     def test_agree_toTermsAndPolicy_false(self):
         payload = {
@@ -72,24 +84,14 @@ class TestRegisterEndpoint(TestCase):
         user = self.session.exec(self.select(self.model).where(self.model.email == payload["email"])).first()
         self.assertIsNotNone(user)
 
-    @classmethod
-    def setUpClass(cls):
-        from dotenv import load_dotenv
-        from pathlib import Path
 
-        env_path = Path(__file__).resolve().parent.parent / ".env"
-        load_dotenv(env_path)
-        
-        print("Setting ENVIRONMENT to 'test' for test database")
-        os.environ["ENVIRONMENT"] = "test"
-        print("This is the current ENVIRONMENT: ", os.getenv("ENVIRONMENT"))
+
     
     def tearDown(self):
-        from insightly_api.db_config import engine, SQLModel
 
-        print("Tearing down test database...")
-        SQLModel.metadata.drop_all(engine)
+
         self.session.close()
+        SQLModel.metadata.drop_all(engine)
         return super().tearDown()
 
 

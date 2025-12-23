@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Body, Header, Query, Cookie, Response
 from fastapi.responses import RedirectResponse
 from typing import Annotated
-from pydantic import AfterValidator
+
 from fastapi import status, Depends
 from sqlmodel import Session, select
 from insightly_api.dependencies import get_session
 from insightly_api.dependencies import check_agreetoTermsandPolicy, authenticate_user
-from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, validate_passwordmatch, TokenType
+from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, TokenType
 from fastapi.exceptions import HTTPException
 from insightly_api.models.user_model import User
 from insightly_api.utils import hash_password, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token, generate_otp, verify_password, sign_cookie, verify_signed_cookie
@@ -27,7 +27,8 @@ router = APIRouter(
 
 @router.post("/register",  
                   status_code=status.HTTP_201_CREATED, description="allow user to register by providing email, password and confirm password for registraton")
-async def register_user(data: Annotated[UserRegistrationType, AfterValidator(validate_passwordmatch), Depends(check_agreetoTermsandPolicy)], session: Annotated[Session, Depends(get_session)]):
+async def register_user(data: Annotated[UserRegistrationType, Depends(check_agreetoTermsandPolicy)], 
+                        session: Annotated[Session, Depends(get_session)]):
 
     user = session.exec(select(User).where(User.email == data.email)).first()
     if user:
@@ -114,7 +115,7 @@ async def get_current_user(request: Request):
 @router.post("/reset-password", 
                   status_code=status.HTTP_200_OK, 
                   description="allow user to provide password and confirm password for password change")
-async def reset_password(data: Annotated[PasswordChangeType, AfterValidator(validate_passwordmatch)], 
+async def reset_password(data: Annotated[PasswordChangeType, Body()], 
                          allow_pswd_reset_token: Annotated[str, Cookie()], 
                          session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
