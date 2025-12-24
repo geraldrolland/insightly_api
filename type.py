@@ -12,30 +12,21 @@ def validate_otp(otp: str):
         raise ValueError("otp must be in digits")
     return otp
 
-
-
-class ProjectType(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    name: str = Field(..., min_length=3)
-    description: str = Field(..., min_length=3)
-    datasource_type: Literal["file", "database", "api"]
-
 class BaseUser(BaseModel):
     password: str = Field(..., min_length=8, description="password must be at least 8 characters long", examples=["strongpassword123"])
     confirm_password: str = Field(..., min_length=8, description="password must be at least 8 characters long", examples=["strongpassword123"])
 
     @model_validator(mode="after")
     def validate_passwordmatch(cls, data):
-        if not re.search(r"[a-z]", data.dict().get("password")):
+        if not re.search(r"[a-z]", data.password):
             raise ValueError("Password must contain at least one lowercase letter")
-        if not re.search(r"[A-Z]", data.dict().get("password")):
+        if not re.search(r"[A-Z]", data.password):
             raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"\d", data.dict().get("password")):
+        if not re.search(r"\d", data.password):
             raise ValueError("Password must contain at least one digit")
-        if not re.search(r"[^A-Za-z0-9]", data.dict().get("password")):
+        if not re.search(r"[^A-Za-z0-9]", data.password):
             raise ValueError("Password must contain at least one special character")
-        if data.dict().get("password") != data.dict().get("confirm_password"):
+        if data.password != data.confirm_password:
             raise ValueError("password and confirm password do not match")
         return data
 

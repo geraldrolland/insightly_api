@@ -6,8 +6,6 @@ from sqlalchemy import Column, Index
 from sqlalchemy.dialects.postgresql import JSONB
 
 
-
-
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     email: str = Field(index=True, unique=True)
@@ -17,11 +15,12 @@ class User(SQLModel, table=True):
     is_email_verified: bool = Field(default=False)
     is_MFA_enabled: bool =  Field(default=False)
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": func.now(), "nullable": False}
+        default_factory=lambda: datetime.now(timezone.utc),
+        nullable=False
     )
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
+        nullable=False,
         sa_column_kwargs={"server_default": func.now(), "onupdate": func.now(), "nullable": False}
     )
 

@@ -84,11 +84,7 @@ class TestRegisterEndpoint(TestCase):
         user = self.session.exec(self.select(self.model).where(self.model.email == payload["email"])).first()
         self.assertIsNotNone(user)
 
-
-
-    
     def tearDown(self):
-
 
         self.session.close()
         SQLModel.metadata.drop_all(engine)
