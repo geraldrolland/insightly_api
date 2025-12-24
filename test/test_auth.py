@@ -27,7 +27,6 @@ class TestRegisterEndpoint(TestCase):
         self.client = TestClient(app)
         self.session = Session(engine)
         self.select = select
-        self.model = User
         self.api_url = "/api/v1/auth/register"
         return super().setUp()
     
@@ -81,7 +80,7 @@ class TestRegisterEndpoint(TestCase):
         }
         response = self.client.post(self.api_url, json=payload)
         self.assertEqual(response.status_code, 201)
-        user = self.session.exec(self.select(self.model).where(self.model.email == payload["email"])).first()
+        user = self.session.exec(self.select(User).where(User.email == payload["email"])).first()
         self.assertIsNotNone(user)
 
     def tearDown(self):
@@ -92,10 +91,108 @@ class TestRegisterEndpoint(TestCase):
 
 
 class TestLoginEndpoint(TestCase):
-    pass
+    def setUp(self):
+        from insightly_api.main import app
+        from sqlmodel import  Session
+        
+
+        SQLModel.metadata.create_all(engine)
+        self.client = TestClient(app)
+        self.session = Session(engine)
+        self.select = select
+        self.api_url = "/api/v1/auth/login"
+        return super().setUp()
+    
+    def test_with_empty_payload(self):
+        response = self.client.post(self.api_url, json={})
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_missing_fields(self):
+        payload = {
+            "email": "testuser@example.com"
+        }
+        response = self.client.post(self.api_url, json=payload)
+        self.assertEqual(response.status_code, 422)
+
+    def test_with_invalid_credentials(self):
+        payload = {
+            "email": "testuser@example.com",
+            "password": "WrongPassword123$"
+        }
+        response = self.client.post(self.api_url, json=payload)
+        self.assertEqual(response.status_code, 401)
+    
+    def test_with_valid_credentials(self):
+        from insightly_api.utils import hash_password
+        # First, create a user in the database
+        user = User(
+            email="testuser@example.com",
+            hashed_password=hash_password("HashedPassword123$"),
+            agree_toTermsAndPolicy=True,
+            is_active=True,
+            is_email_verified=True,
+            is_MFA_enabled=False
+        )
+        self.session.add(user)
+        self.session.commit()
+
+        payload = {
+            "email": "testuser@example.com",
+            "password": "HashedPassword123$"
+        }
+        response = self.client.post(self.api_url, json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.cookies.get("access_token"))
+
+    def tearDown(self):
+
+        self.session.close()
+        SQLModel.metadata.drop_all(engine)
+        return super().tearDown()
 
 class TestVerifyEmailEndpoint(TestCase):
-    pass
+    def setUp(self):
+        from insightly_api.main import app
+        from sqlmodel import  Session
+        
+
+        SQLModel.metadata.create_all(engine)
+        self.client = TestClient(app)
+        self.session = Session(engine)
+        self.select = select
+        self.api_url = "/api/v1/auth/verify-email"
+        return super().setUp()
+    
+    def test_with_missing_token_and_next(self):
+        response = self.client.get(self.api_url)
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_invalid_token_and_next(self):
+        response = self.client.get(self.api_url, params={"token": "invalidtoken", "next": "login"})
+        self.assertEqual(response.status_code, 400)
+    
+    def test_with_valid_token_and_next(self):
+        from insightly_api.utils import generate_verification_link
+
+        user = User(
+            email="testuser@example.com",
+            hashed_password="SomeHashedPassword",
+            agree_toTermsAndPolicy=True,
+            is_active=True,
+            is_email_verified=False,
+            is_MFA_enabled=False
+            )
+        self.session.add(user)
+        self.session.commit()
+        token, next = tuple(generate_verification_link(user.email, next="nexturl").split("?")[1].split("&"))
+        response = self.client.get(self.api_url, params={"token": token.split("=")[1], "next": next.split("=")[1]})
+        self.assertEqual(response.status_code, 200)
+
+    def tearDown(self):
+
+        self.session.close()
+        SQLModel.metadata.drop_all(engine)
+        return super().tearDown()
 
 class TestPasswordResetEndpoint(TestCase):
     pass

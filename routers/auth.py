@@ -51,9 +51,9 @@ async def login_user(data: UserLoginType,
 
     user = session.exec(select(User).where(User.email == data.email)).first()
     if not user:
-        raise HTTPException(status_code=400, detail="invalid email or password")
+        raise HTTPException(status_code=401, detail="invalid email or password")
     if not verify_password(data.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="invalid email or password")
+        raise HTTPException(status_code=401, detail="invalid email or password")
     if user.is_email_verified == False:
         verification_link = generate_verification_link(user.email, next="login")
         body = {"verification_link": verification_link}
@@ -155,12 +155,11 @@ async def verify_email(query: Annotated[TokenType, Query()],
     email = redis_client.get(query.token)
     if not email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid or expired link provided")
-    user = session.exec(select(User).where(User.email == email)).first()
+    user = session.exec(select(User).where(User.email == email)).one()
     redis_client.delete(query.token)
-    if not user.is_email_verified:
-        user.is_email_verified = True
-        session.add(user)
-        session.commit()
+    user.is_email_verified = True
+    session.add(user)
+    session.commit()
         
     if query.next == "reset-password":
         password_reset_token = str(uuid.uuid4())
