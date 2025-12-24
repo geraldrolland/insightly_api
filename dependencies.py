@@ -4,15 +4,23 @@ from fastapi.exceptions import HTTPException
 from .db_config import get_engine
 from sqlmodel import  Session, select
 from fastapi import Request, Response, Depends
+from functools import lru_cache
 
 async def check_agreetoTermsandPolicy(data: UserRegistrationType):
     if data.agree_toTermsAndPolicy != True:
         raise HTTPException(status_code=400, detail="user must agree to terms and policy before proceeding with registration")
     return data
 
+
 async def get_session():
     with Session(get_engine()) as session:
         yield session
+
+
+def get_test_session():
+    return Session(get_engine())
+
+
 
 
 async def authenticate_user(request: Request, response: Response, session: Annotated[Session, Depends(get_session)]):

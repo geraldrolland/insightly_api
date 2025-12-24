@@ -7,25 +7,24 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 from insightly_api.db_config import get_engine,  SQLModel
+from insightly_api.dependencies import get_test_session, get_session
+from insightly_api.main import app
 
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(env_path)
 os.environ["ENVIRONMENT"] = "test"
 engine = get_engine()
-
-
-
+session = get_test_session()
+app.dependency_overrides[get_session] = lambda: session
 
 
 class TestRegisterEndpoint(TestCase):
     def setUp(self):
         from insightly_api.main import app
-        from sqlmodel import  Session
         
-
         SQLModel.metadata.create_all(engine)
         self.client = TestClient(app)
-        self.session = Session(engine)
+        self.session = session
         self.select = select
         self.api_url = "/api/v1/auth/register"
         return super().setUp()
@@ -82,9 +81,9 @@ class TestRegisterEndpoint(TestCase):
         self.assertEqual(response.status_code, 201)
         user = self.session.exec(self.select(User).where(User.email == payload["email"])).first()
         self.assertIsNotNone(user)
+        
 
     def tearDown(self):
-
         self.session.close()
         SQLModel.metadata.drop_all(engine)
         return super().tearDown()
@@ -98,7 +97,7 @@ class TestLoginEndpoint(TestCase):
 
         SQLModel.metadata.create_all(engine)
         self.client = TestClient(app)
-        self.session = Session(engine)
+        self.session = session
         self.select = select
         self.api_url = "/api/v1/auth/login"
         return super().setUp()
@@ -145,7 +144,6 @@ class TestLoginEndpoint(TestCase):
         self.assertIsNotNone(response.cookies.get("access_token"))
 
     def tearDown(self):
-
         self.session.close()
         SQLModel.metadata.drop_all(engine)
         return super().tearDown()
@@ -153,12 +151,11 @@ class TestLoginEndpoint(TestCase):
 class TestVerifyEmailEndpoint(TestCase):
     def setUp(self):
         from insightly_api.main import app
-        from sqlmodel import  Session
-        
+
 
         SQLModel.metadata.create_all(engine)
         self.client = TestClient(app)
-        self.session = Session(engine)
+        self.session = session
         self.select = select
         self.api_url = "/api/v1/auth/verify-email"
         return super().setUp()
@@ -187,17 +184,113 @@ class TestVerifyEmailEndpoint(TestCase):
         token, next = tuple(generate_verification_link(user.email, next="nexturl").split("?")[1].split("&"))
         response = self.client.get(self.api_url, params={"token": token.split("=")[1], "next": next.split("=")[1]})
         self.assertEqual(response.status_code, 200)
+        user = self.session.exec(self.select(User).where(User.email == user.email)).one()
+        self.assertTrue(user.is_email_verified)
 
     def tearDown(self):
-
         self.session.close()
         SQLModel.metadata.drop_all(engine)
         return super().tearDown()
 
 class TestPasswordResetEndpoint(TestCase):
-    pass
+    def setUp(self):
+        from insightly_api.main import app
+        from sqlmodel import  Session
+        
+
+        SQLModel.metadata.create_all(engine)
+        self.client = TestClient(app)
+        self.session = session
+        self.select = select
+        self.api_url = "/api/v1/auth/reset-password"
+        return super().setUp()
+    
+    def test_with_empty_payload(self):
+        response = self.client.post(self.api_url, json={})
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_incomplete_payload(self):
+        payload = {
+            "password": "testpassword"
+        }
+        response = self.client.post(self.api_url, json=payload)
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_invalid_payload(self):
+        payload = {
+            "password": "testpassword",
+            "confirm_password": "testpassword"
+        }
+        response = self.client.post(self.api_url, json=payload)
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_extra_field(self):
+        payload = {
+            "password": "examplepassword",
+            "confirm_password": "examplepassword",
+            "extra_field": "extra_value"
+        }
+        response = self.client.post(self.api_url, json=payload)
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_mismatch_passwords(self):
+        payload = {
+            "password": "Testpassword123$",
+            "confirm_password": "mismatchpassword"
+        }
+        response = self.client.post(self.api_url, json=payload)
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_valid_payload_without_allowtoken_in_cookie(self):
+        payload = {
+            "password": "Testpassword123$",
+            "confirm_password": "Testpassword123$"
+        }
+        response = self.client.post(self.api_url, json=payload)
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_valid_payload_withinvalid_allowtoken_in_cookie(self):
+        payload = {
+            "password": "Testpassword123$",
+            "confirm_password": "Testpassword123$"
+        }
+        response = self.client.post(self.api_url, json=payload, cookies={"allow_pswd_reset_token": "invalid_password_reset_token"})
+        self.assertEqual(response.status_code, 401)
+    
+    def test_with_valid_payload_with_validallowtoken_in_cookie(self):
+        from insightly_api.main import redis_client
+        from insightly_api.utils import hash_password, sign_cookie, verify_password
+        import uuid
+
+        user = User(
+            email="testuser@example.com",
+            hashed_password=hash_password("Testpassword123$"),
+            agree_toTermsAndPolicy=True,
+            is_email_verified=True,
+            is_MFA_enabled=False
+        )
+        self.session.add(user)
+        self.session.commit()
+        allow_pswd_reset_token = str(uuid.uuid4())
+        redis_client.set(name=allow_pswd_reset_token, value=user.email, ex=7*60)
+        payload = {
+            "password": "Newtestpassword123$",
+            "confirm_password": "Newtestpassword123$"
+        }
+        response = self.client.post(self.api_url, json=payload, cookies={"allow_pswd_reset_token": sign_cookie(allow_pswd_reset_token)})
+        self.assertEqual(response.status_code, 200)
+        email = redis_client.get(allow_pswd_reset_token)
+        self.assertIsNone(email)
+        user = self.session.exec(self.select(User).where(User.email == "testuser@example.com")).one()
+        self.assertTrue(verify_password(payload.get("password"), user.hashed_password))
+
+    def tearDown(self):
+        self.session.close()
+        SQLModel.metadata.drop_all(engine)
+        return super().tearDown()
 
 class TestOTPVerificationEndpoint(TestCase):
+
     pass
 
 class TestEnableMFAEndpoint(TestCase):

@@ -123,7 +123,7 @@ async def reset_password(data: Annotated[PasswordChangeType, Body()],
     try:
         allow_pswd_reset_token = verify_signed_cookie(allow_pswd_reset_token, max_age=10*60)
     except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="permission denied for a password reset")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="permission denied for a password reset from max age")
     email = redis_client.get(allow_pswd_reset_token)
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="permission denied for a password reset")
