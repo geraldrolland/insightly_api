@@ -255,7 +255,8 @@ class TestPasswordResetEndpoint(TestCase):
             "password": "Testpassword123$",
             "confirm_password": "Testpassword123$"
         }
-        response = self.client.post(self.api_url, json=payload, cookies={"allow_pswd_reset_token": "invalid_password_reset_token"})
+        self.client.cookies.set("allow_pswd_reset_token", "invalidtoken")
+        response = self.client.post(self.api_url, json=payload)
         self.assertEqual(response.status_code, 401)
     
     def test_with_valid_payload_with_validallowtoken_in_cookie(self):
@@ -278,7 +279,8 @@ class TestPasswordResetEndpoint(TestCase):
             "password": "Newtestpassword123$",
             "confirm_password": "Newtestpassword123$"
         }
-        response = self.client.post(self.api_url, json=payload, cookies={"allow_pswd_reset_token": sign_cookie(allow_pswd_reset_token)})
+        self.client.cookies.set("allow_pswd_reset_token", sign_cookie(allow_pswd_reset_token))
+        response = self.client.post(self.api_url, json=payload)
         self.assertEqual(response.status_code, 200)
         email = redis_client.get(allow_pswd_reset_token)
         self.assertIsNone(email)
@@ -319,20 +321,23 @@ class TestOTPVerificationEndpoint(TestCase):
         response = self.client.post(self.api_url, json={"otp_code": "123456", "extra_field": "extra_value"})
         self.assertEqual(response.status_code, 422)
     
-    def test_with_missing_otp_token_cookie(self):
+    def test_with_missing_otp_ctx_in_cookie(self):
         response = self.client.post(self.api_url, json={"otp_code": "123456"})
         self.assertEqual(response.status_code, 422)
     
-    def test_with_invalid_otp_token_cookie(self):
-        response = self.client.post(self.api_url, json={"otp_code": "123456"}, cookies={"otp_token": "invalidtoken"})
-        print(response.json())
+    def test_with_invalid_otp_ctx_in_cookie(self):
+        self.client.cookies.set("otp_ctx", "invalidtoken")
+        response = self.client.post(self.api_url, json={"otp_code": "123456"})
         self.assertEqual(response.status_code, 401)
     
+
+
     def test_with_valid_otp_code_and_token(self):
         from insightly_api.main import redis_client
         from insightly_api.utils import generate_otp
-        from insightly_api.utils import hash_password
+        from insightly_api.utils import hash_password, sign_cookie
         import uuid
+        import json
 
         user = User(
             email="testuser@example.com",
@@ -345,22 +350,148 @@ class TestOTPVerificationEndpoint(TestCase):
         self.session.commit()
         otp_code = generate_otp(length=6)
         otp_token = str(uuid.uuid4())
-        redis_client.set(name=otp_token, value=otp_code, ex=2*60)
+        redis_client.set(name=otp_token, value=json.dumps({"otp_code": otp_code, "attempts": 0}), ex=2*60)
         payload = {
-            "otp_code": otp_code
+            "email": user.email,
+            "otp_token": otp_token
         }
-        response = self.client.post(self.api_url, json=payload, cookies={"otp_token": otp_token})
+        value = sign_cookie(payload)
+        self.client.cookies.set("otp_ctx", value)
+        response = self.client.post(self.api_url, json={"otp_code": otp_code})
         self.assertEqual(response.status_code, 200)
         self.assertIsNotNone(response.cookies.get("access_token"))
+
+    def test_exceed_maximum_retry(self):
+        from insightly_api.main import redis_client
+        from insightly_api.utils import generate_otp
+        from insightly_api.utils import hash_password, sign_cookie
+        import uuid
+        import json
+
+        user = User(
+            email="testuser@example.com",
+            hashed_password=hash_password("Testpassword123$"),
+            agree_toTermsAndPolicy=True,
+            is_email_verified=True,
+            is_MFA_enabled=True
+        )
+        self.session.add(user)
+        self.session.commit()
+        otp_code = generate_otp(length=6)
+        otp_token = str(uuid.uuid4())
+        redis_client.set(name=otp_token, value=json.dumps({"otp_code": otp_code, "attempts": 3}), ex=2*60)
+        payload = {
+            "email": user.email,
+            "otp_token": otp_token
+        }
+
+        value = sign_cookie(payload)
+        self.client.cookies.set("otp_ctx", value)
+        response = self.client.post(self.api_url, json={"otp_code": "123456"})
+        self.assertEqual(response.status_code, 403)
+        self.assertIsNone(redis_client.get(otp_token))
 
     def tearDown(self):
         self.session.close()
         SQLModel.metadata.drop_all(engine)
         return super().tearDown()
 
-class TestEnableMFAEndpoint(TestCase):
-    pass
+class TestOTPResendEndpoint(TestCase):
+    def setUp(self):
+        from insightly_api.main import app
+        from sqlmodel import  Session
+        
 
+        SQLModel.metadata.create_all(engine)
+        self.client = TestClient(app)
+        self.session = session
+        self.select = select
+        self.api_url = "/api/v1/auth/resend-otp"
+        return super().setUp()
+    
+    def test_with_missing_otp_ctx_in_cookie(self):
+        response = self.client.get(self.api_url)
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_invalid_otp_ctx_in_cookie(self):
+        self.client.cookies.set("otp_ctx", "invalidtoken")
+        response = self.client.get(self.api_url)
+        self.assertEqual(response.status_code, 401)
+    
+    def test_with_valid_otp_ctx_in_cookie(self):
+        from insightly_api.utils import hash_password, sign_cookie
+        import uuid
+        
+        user = User(
+            email="testuser@example.com",
+            hashed_password=hash_password("Testpassword123$"),
+            agree_toTermsAndPolicy=True,
+            is_email_verified=True,
+            is_MFA_enabled=True
+        )
+        self.session.add(user)
+        self.session.commit()
+        payload = {
+            "email": user.email,
+            "otp_token": str(uuid.uuid4())
+        }
+        value = sign_cookie(payload)
+        self.client.cookies.set("otp_ctx", value)
+        response = self.client.get(self.api_url)
+        self.assertEqual(response.status_code, 200)
+    
+    def test_with_active_otp_token(self):
+        from insightly_api.main import redis_client
+        from insightly_api.utils import generate_otp
+        from insightly_api.utils import hash_password, sign_cookie
+        import uuid
+        import json
+        
+        user = User(
+            email="testuser@example.com",
+            hashed_password=hash_password("Testpassword123$"),
+            agree_toTermsAndPolicy=True,
+            is_email_verified=True,
+            is_MFA_enabled=True
+        )
+        self.session.add(user)
+        self.session.commit()
+        otp_code = generate_otp(length=6)
+        otp_token = str(uuid.uuid4())
+        redis_client.set(name=otp_token, value=json.dumps({"otp_code": otp_code, "attempts": 0}), ex=2*60)
+        payload = {
+            "email": user.email,
+            "otp_token": otp_token
+        }
+        value = sign_cookie(payload)
+        self.client.cookies.set("otp_ctx", value)
+        response = self.client.get(self.api_url)
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(redis_client.get(otp_token))
+
+    def tearDown(self):
+        self.session.close()
+        SQLModel.metadata.drop_all(engine)
+        return super().tearDown()
+
+
+class TestEnableMFAEndpoint(TestCase):
+    def setUp(self):
+        from insightly_api.main import app
+        from sqlmodel import  Session
+        
+
+        SQLModel.metadata.create_all(engine)
+        self.client = TestClient(app)
+        self.session = session
+        self.select = select
+        self.api_url = "/api/v1/auth/enable-mfa"
+        return super().setUp()
+
+    def tearDown(self):
+        self.session.close()
+        SQLModel.metadata.drop_all(engine)
+        return super().tearDown()
 class TestDisableMFAEndpoint(TestCase):
     pass
 

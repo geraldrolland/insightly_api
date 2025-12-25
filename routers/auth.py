@@ -78,7 +78,6 @@ async def login_user(data: UserLoginType,
                             httponly=True, 
                             secure=bool(os.getenv("COOKIE_SECURE")), 
                             samesite=os.getenv("COOKIE_SAMESITE"),
-                            max_age=2*60
                             )
         return response
     
@@ -93,10 +92,7 @@ async def login_user(data: UserLoginType,
                         httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
                         samesite=os.getenv("COOKIE_SAMESITE"))
 
-    return {
-        "id": user.id,
-        "email": user.email,
-    }
+    return {"detail": "user logged in successfully"}
 
 
 @router.get("/me", 
@@ -176,16 +172,16 @@ async def verify_email(query: Annotated[TokenType, Query()],
 def verify_otp(otp_code: Annotated[str, Body(embed=True)], 
                otp_ctx: Annotated[str, Cookie()], 
                response: Response,
-               request: Request, 
                session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
     import json
 
     try:
-        payload = verify_signed_cookie(otp_ctx, max_age=2*60)
+        payload = verify_signed_cookie(otp_ctx, max_age=None)
     except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="cannot process provided otp. otp expired")
-    value = json.loads(redis_client.get(payload.get("otp_token"))) if redis_client.get(payload.get("otp_token")) else None
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="cannot verify otp. otp context expired")
+
+    value = json.loads(redis_client.get(payload.get("otp_token")))
     email = payload.get("email")
     if not value:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="cannot process provided otp. otp expired")
@@ -194,61 +190,64 @@ def verify_otp(otp_code: Annotated[str, Body(embed=True)],
         redis_client.set(name=payload.get("otp_token"), value=json.dumps(value), ex=2*60)
         if value["attempts"] >= 3:
             redis_client.delete(payload.get("otp_token"))
-            redis_client.delete(email)
-            request.delete_cookie("otp_ctx")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="maximum otp verification attempts exceeded. generate new otp to proceed")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid otp provided")
     user = session.exec(select(User).where(User.email == email)).first()
+
+    
+
+    redis_client.delete(payload.get("otp_token"))
+    response.set_cookie(key="otp_ctx", value="", expires=0)
+
     payload = {
         "id": user.id,
         "email": user.email
     }
-    
-    redis_client.delete(payload.get("otp_token"))
-    redis_client.delete(email)
-    request.delete_cookie("otp_ctx")
-
     access_token = generate_access_token(payload)
     response.set_cookie(key="access_token", 
                         value=sign_cookie(access_token),
                         httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
                         samesite=os.getenv("COOKIE_SAMESITE"))
-    return {
-        "id": user.id,
-        "email": user.email,
-    }
+    return {"detail": "otp verified successfully"}
 
 @router.get("/resend-otp", status_code=status.HTTP_200_OK, description="resend new otp to users")
-def resend_otp(email: Annotated[str, Cookie()],
-               response: Response, 
+def resend_otp(response: Response,
+               request: Request, 
                session: Annotated[Session, Depends(get_session)], 
-               otp_token: Annotated[str, Cookie()]):
+               otp_ctx: Annotated[str, Cookie()]):
     from insightly_api.main import redis_client
+    import json
 
-    otp = redis_client.get(otp_token)
+    try:
+        payload = verify_signed_cookie(otp_ctx, max_age=None)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="cannot resend otp. otp context expired")
+    otp = redis_client.get(payload.get("otp_token"))
     if otp:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot process. current otp code has not expired")
-    user = session.exec(select(User).where(User.email == email)).first()
+    user = session.exec(select(User).where(User.email == payload.get("email"))).first()
     if user.is_MFA_enabled == False:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is not enabled for this user")
     otp_code = generate_otp(length=6)
     key = str(uuid.uuid4())
-    redis_client.set(name=key, value=otp_code, ex=2*60)
-    response.set_cookie(key="otp_token", 
-                        value=key, 
+    payload["otp_token"] = key
+    redis_client.set(name=key, value=json.dumps({"otp_code": otp_code, "attempts": 0}), ex=2*60)
+    response.set_cookie(key="otp_ctx", 
+                        value=sign_cookie(payload), 
                         httponly=True, 
                         secure=bool(os.getenv("COOKIE_SECURE")), 
-                        samesite=os.getenv("COOKIE_SAMESITE"))
+                        samesite=os.getenv("COOKIE_SAMESITE"),
+                        )
     body = {"otp": otp_code}
     send_otp_email.delay(user.email, body)
     return {"detail": "otp sent successfully"}
 
-@router.get("/enable-MFA", 
+@router.get("/enable-mfa", 
             status_code=status.HTTP_200_OK, 
             description="enable multifactor authentication",
             dependencies=[Depends(authenticate_user)]
             )
-def enable_MFA(request: Request, session: Annotated[Session, Depends(get_session)]):
+def enable_mfa(request: Request, session: Annotated[Session, Depends(get_session)]):
     user = request.state.auth_user
     if user.is_MFA_enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is already enabled for this user")
@@ -258,8 +257,12 @@ def enable_MFA(request: Request, session: Annotated[Session, Depends(get_session
     return {"detail": "multifactor authentication enabled successfully"}
     
     
-@router.get("/disable-MFA", status_code=status.HTTP_200_OK, description="disable multifactor authentication")
-def disable_MFA(request: Request, session: Annotated[Session, Depends(get_session)]):
+@router.get("/disable-mfa", 
+            status_code=status.HTTP_200_OK, 
+            description="disable multifactor authentication",
+            dependencies=[Depends(authenticate_user)]
+            )
+def disable_mfa(request: Request, session: Annotated[Session, Depends(get_session)]):
     user = request.state.auth_user
     if not user.is_MFA_enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is already disabled for this user")
@@ -268,14 +271,20 @@ def disable_MFA(request: Request, session: Annotated[Session, Depends(get_sessio
     session.commit()
     return {"detail": "multifactor authentication disabled successfully"}
 
-@router.get("/status-MFA", status_code=status.HTTP_200_OK, description="multifactor authentication status")
-def status_MFA(request: Request):
+@router.get("/status-mfa", 
+            status_code=status.HTTP_200_OK, 
+            description="multifactor authentication status",
+            dependencies=[Depends(authenticate_user)]
+            )
+def status_mfa(request: Request):
     user = request.state.auth_user
     return {"is_MFA_enabled": user.is_MFA_enabled}
 
 @router.get("/logout", 
             status_code=status.HTTP_200_OK, 
-            description="log out currently logged in user by deleting access token cookie")
+            description="log out currently logged in user by deleting access token cookie",
+            dependencies=[Depends(authenticate_user)]
+            )
 def logout_user(request: Request, response: Response):
     from insightly_api.main import redis_client
     refresh_token = redis_client.get(verify_signed_cookie(request.cookies.get("access_token")))
