@@ -1,3 +1,4 @@
+from celery import uuid
 from fastapi.testclient import TestClient
 from unittest import TestCase
 from insightly_api.dependencies import get_session
@@ -290,8 +291,72 @@ class TestPasswordResetEndpoint(TestCase):
         return super().tearDown()
 
 class TestOTPVerificationEndpoint(TestCase):
+    def setUp(self):
+        from insightly_api.main import app
+        from sqlmodel import  Session
+        
 
-    pass
+        SQLModel.metadata.create_all(engine)
+        self.client = TestClient(app)
+        self.session = session
+        self.select = select
+        self.api_url = "/api/v1/auth/verify-otp"
+        return super().setUp()
+
+    def test_with_empty_payload(self):
+        response = self.client.post(self.api_url, json={})
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_non_digit_otp_code(self):
+        response = self.client.post(self.api_url, json={"otp_code": "abcdef"})
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_incomplete_otp_code(self):
+        response = self.client.post(self.api_url, json={"otp_code": "123"})
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_extra_field_in_payload(self):
+        response = self.client.post(self.api_url, json={"otp_code": "123456", "extra_field": "extra_value"})
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_missing_otp_token_cookie(self):
+        response = self.client.post(self.api_url, json={"otp_code": "123456"})
+        self.assertEqual(response.status_code, 422)
+    
+    def test_with_invalid_otp_token_cookie(self):
+        response = self.client.post(self.api_url, json={"otp_code": "123456"}, cookies={"otp_token": "invalidtoken"})
+        print(response.json())
+        self.assertEqual(response.status_code, 401)
+    
+    def test_with_valid_otp_code_and_token(self):
+        from insightly_api.main import redis_client
+        from insightly_api.utils import generate_otp
+        from insightly_api.utils import hash_password
+        import uuid
+
+        user = User(
+            email="testuser@example.com",
+            hashed_password=hash_password("Testpassword123$"),
+            agree_toTermsAndPolicy=True,
+            is_email_verified=True,
+            is_MFA_enabled=True
+        )
+        self.session.add(user)
+        self.session.commit()
+        otp_code = generate_otp(length=6)
+        otp_token = str(uuid.uuid4())
+        redis_client.set(name=otp_token, value=otp_code, ex=2*60)
+        payload = {
+            "otp_code": otp_code
+        }
+        response = self.client.post(self.api_url, json=payload, cookies={"otp_token": otp_token})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.cookies.get("access_token"))
+
+    def tearDown(self):
+        self.session.close()
+        SQLModel.metadata.drop_all(engine)
+        return super().tearDown()
 
 class TestEnableMFAEndpoint(TestCase):
     pass

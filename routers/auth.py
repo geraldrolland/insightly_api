@@ -48,6 +48,7 @@ async def login_user(data: UserLoginType,
                      response: Response, 
                      session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
+    import json
 
     user = session.exec(select(User).where(User.email == data.email)).first()
     if not user:
@@ -62,25 +63,23 @@ async def login_user(data: UserLoginType,
     if user.is_MFA_enabled:
         otp_code = generate_otp(length=6)
         key = str(uuid.uuid4())
-        redis_client.set(name=key, value=otp_code, ex=2*60)
-        # set key as otp_token in cookie 
+        redis_client.set(name=key, value=json.dumps({"otp_code": otp_code, "attempts": 0}), ex=2*60)
+        payload = {
+            "email": user.email,
+            "otp_token": key
+        }
+        value = sign_cookie(payload)
         body = {"otp": otp_code}
         send_otp_email.delay(user.email, body)
         redirect_url = f"{os.getenv("APP_HOST")}?auth_state=otp-verification"
         response = RedirectResponse(redirect_url)
-        response.set_cookie(key="otp_token", 
-                            value=key, 
+        response.set_cookie(key="otp_ctx", 
+                            value=value, 
                             httponly=True, 
                             secure=bool(os.getenv("COOKIE_SECURE")), 
                             samesite=os.getenv("COOKIE_SAMESITE"),
-                            max_age=120
+                            max_age=2*60
                             )
-
-        response.set_cookie(key="email", 
-                            value=user.email, 
-                            httponly=True, 
-                            secure=bool(os.getenv("COOKIE_SECURE")), 
-                            samesite=os.getenv("COOKIE_SAMESITE"))
         return response
     
     payload = {
@@ -175,26 +174,48 @@ async def verify_email(query: Annotated[TokenType, Query()],
 
 @router.post("/verify-otp", status_code=200, description="verify the provided otp code")
 def verify_otp(otp_code: Annotated[str, Body(embed=True)], 
-               otp_token: Annotated[str, Cookie()], 
-               email: Annotated[str, Cookie()], 
+               otp_ctx: Annotated[str, Cookie()], 
+               response: Response,
+               request: Request, 
                session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
+    import json
 
-    otp = redis_client.get(otp_token)
-    if not otp:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="cannot process provided otp. otp expired")
-    if otp != otp_code:
+    try:
+        payload = verify_signed_cookie(otp_ctx, max_age=2*60)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="cannot process provided otp. otp expired")
+    value = json.loads(redis_client.get(payload.get("otp_token"))) if redis_client.get(payload.get("otp_token")) else None
+    email = payload.get("email")
+    if not value:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="cannot process provided otp. otp expired")
+    if value.get("otp_code") != otp_code:
+        value["attempts"] += 1
+        redis_client.set(name=payload.get("otp_token"), value=json.dumps(value), ex=2*60)
+        if value["attempts"] >= 3:
+            redis_client.delete(payload.get("otp_token"))
+            redis_client.delete(email)
+            request.delete_cookie("otp_ctx")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="maximum otp verification attempts exceeded. generate new otp to proceed")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid otp provided")
     user = session.exec(select(User).where(User.email == email)).first()
     payload = {
         "id": user.id,
         "email": user.email
     }
+    
+    redis_client.delete(payload.get("otp_token"))
+    redis_client.delete(email)
+    request.delete_cookie("otp_ctx")
+
     access_token = generate_access_token(payload)
+    response.set_cookie(key="access_token", 
+                        value=sign_cookie(access_token),
+                        httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
+                        samesite=os.getenv("COOKIE_SAMESITE"))
     return {
         "id": user.id,
         "email": user.email,
-        "access_token": access_token
     }
 
 @router.get("/resend-otp", status_code=status.HTTP_200_OK, description="resend new otp to users")

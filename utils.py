@@ -126,10 +126,10 @@ def log_to_file(message: str):
             f.write(f"{datetime.now(timezone.utc).isoformat()} - {message}\n")
 
 
-def sign_cookie(value: str):
+def sign_cookie(value: dict[str, any] | str) -> str:
     return serializer.dumps(value)
 
-def verify_signed_cookie(signed_value: str, max_age: int = None):
+def verify_signed_cookie(signed_value: str, max_age: int = None) -> dict[str, any] | str:
     return serializer.loads(signed_value, max_age=max_age)
 
 
