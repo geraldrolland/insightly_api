@@ -2,22 +2,22 @@ from unittest import TestCase
 from insightly_api.utils import *
 
 class TestUtils(TestCase):
-    def test_hash_and_verify_password(self):
+    def test_hash_and_verify_hash(self):
         password = "StrongPassword123!"
-        hashed = hash_password(password)
-        self.assertTrue(verify_password(password, hashed))
+        hashed = hash(password)
+        self.assertTrue(verify_hash(password, hashed))
 
     def test_generate_and_verify_access_token(self):
         data = {"email": "test@example.com"}
-        token = generate_access_token(data)
-        payload = verify_access_token(token)
+        access_token, refresh_token = generate_access_token(data)
+        payload = verify_access_token(access_token)
         self.assertEqual(payload["email"], data["email"])
     
     def test_refresh_access_token(self):
         data = {"email": "test@example.com"}
-        token = generate_access_token(data)
-        new_token = refresh_access_token(token)
-        new_payload = verify_access_token(new_token)
+        access_token, refresh_token = generate_access_token(data)
+        new_access_token, new_refresh_token = refresh_access_token(refresh_token)
+        new_payload = verify_access_token(new_access_token)
         self.assertEqual(new_payload["email"], data["email"])
     
     def test_generate_verification_link(self):

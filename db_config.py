@@ -1,7 +1,6 @@
 from sqlmodel import create_engine, SQLModel
-from dotenv import load_dotenv
-import os
-load_dotenv(".env")
+from insightly_api.core.settings import settings
+
 
 sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
@@ -12,9 +11,9 @@ connect_args = {"check_same_thread": False}
 def get_engine():
     engine = None
 
-    if os.getenv("ENVIRONMENT") == "dev":
+    if settings.ENVIRONMENT == "dev":
         engine = create_engine(postgresql_url, future=True)
-    elif os.getenv("ENVIRONMENT") == "test":
+    elif settings.ENVIRONMENT == "test":
         engine = create_engine(postgresql_test_url, future=True)
     
     return engine

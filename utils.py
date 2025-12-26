@@ -27,52 +27,58 @@ serializer = URLSafeTimedSerializer(
 password_hasher = PasswordHash.recommended()
 
 
-def hash_password(password: str) -> str:
+def hash(password: str) -> str:
     return password_hasher.hash(password)
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+def verify_hash(plain_password: str, hashed_password: str) -> bool:
     return password_hasher.verify(plain_password, hashed_password)
 
 def generate_access_token(data: dict):
+    from insightly_api.core.settings import settings
     from insightly_api.main import redis_client
     import uuid
     import json
 
     to_encode = data.copy()
-    expire = datetime.now() + timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")))
-    to_encode.update({"exp": expire})
+    session_id = str(uuid.uuid4())
+    access_token_expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    refresh_token_expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": access_token_expire})
     access_token = jwt.encode(to_encode, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
-    refresh_token = str(uuid.uuid4())
-    to_encode.pop("exp")
-    redis_client.set(name=refresh_token, ex=3600*24*3, value=json.dumps(to_encode))
-    redis_client.set(name=access_token, value=refresh_token)
-    return access_token
+    refresh_token = jwt.encode({"exp": refresh_token_expire, "session_id": session_id}, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
+    to_encode.pop("exp", None)
+    to_encode.update({"hashed_refresh_token": hash(refresh_token)})
+    redis_client.set(name=session_id, value=json.dumps(to_encode), ex=3600*24*3)
+    return access_token, refresh_token
 
 def verify_access_token(token: str):
     payload = jwt.decode(token, os.getenv("SECRET_KEY"), algorithms=[os.getenv("ALGORITHM")])
     return payload
 
-def refresh_access_token(access_token: str):
+def refresh_access_token(refresh_token: str):
     from insightly_api.main import redis_client
     from .exceptions import ExpiredRefreshTokenError
     import uuid
     import json
+    from insightly_api.core.settings import settings
 
-    refresh_token = redis_client.get(access_token)
-    payload = json.loads(redis_client.get(refresh_token)) if refresh_token else None
-    if not payload:
-        raise ExpiredRefreshTokenError()
-    expire = datetime.now() + timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")))
-    payload.update({"exp": expire})
+    try:
+        payload = jwt.decode(refresh_token, os.getenv("SECRET_KEY"), algorithms=[os.getenv("ALGORITHM")])
+    except jwt.ExpiredSignatureError:
+        raise ExpiredRefreshTokenError("refresh token has expired, please log in again")
+    session_id = payload.get("session_id")
+    stored_data = json.loads(redis_client.get(session_id))
+    if not verify_hash(refresh_token, stored_data.get("hashed_refresh_token")):
+        raise ExpiredRefreshTokenError("refresh token is invalid, please log in again")
+    payload = stored_data.copy()
+    payload.pop("hashed_refresh_token", None)
     new_access_token = jwt.encode(payload, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
-    new_refresh_token = str(uuid.uuid4())
-    redis_client.set(name=new_refresh_token, ex=3600*24*3, value=str(payload.pop("exp")))
-    redis_client.set(name=new_access_token, value=new_refresh_token)
-
-    redis_client.delete(access_token)
-    redis_client.delete(refresh_token)
-
-    return new_access_token
+    new_session_id = str(uuid.uuid4())
+    new_refresh_token_expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    new_refresh_token = jwt.encode({"exp": new_refresh_token_expire, "session_id": new_session_id}, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
+    redis_client.set(name=new_session_id, value=json.dumps(stored_data.update({"hashed_refresh_token": hash(new_refresh_token)})), ex=3600*24*3)
+    redis_client.delete(session_id)
+    return new_access_token, new_refresh_token
 
 def generate_verification_link(email: str, next: str):
     from insightly_api.main import redis_client

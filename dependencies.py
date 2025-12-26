@@ -4,7 +4,7 @@ from fastapi.exceptions import HTTPException
 from .db_config import get_engine
 from sqlmodel import  Session, select
 from fastapi import Request, Response, Depends
-from functools import lru_cache
+from insightly_api.utils import verify_access_token, refresh_access_token, verify_signed_cookie, sign_cookie
 
 async def check_agreetoTermsandPolicy(data: UserRegistrationType):
     if data.agree_toTermsAndPolicy != True:
@@ -24,7 +24,6 @@ def get_test_session():
 
 
 async def authenticate_user(request: Request, response: Response, session: Annotated[Session, Depends(get_session)]):
-    from insightly_api.utils import verify_access_token, refresh_access_token, verify_signed_cookie, sign_cookie
     from fastapi.exceptions import HTTPException
     from jwt.exceptions import ExpiredSignatureError
     from .models.user_model import User
@@ -34,28 +33,33 @@ async def authenticate_user(request: Request, response: Response, session: Annot
 
     load_dotenv(".env")
 
-    signed_access_token = request.cookies.get("access_token")
-    if not signed_access_token:
-        raise HTTPException(status_code=401, detail="access token missing in cookies")
-    access_token = None
     try:
-        access_token = verify_signed_cookie(signed_access_token)
+        payload = verify_signed_cookie(request.cookies.get("auth_token"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="invalid or missing auth token cookie")
+    access_token = payload.get("access_token")
+    refresh_token = payload.get("refresh_token")
+    try:
         payload = verify_access_token(access_token)
         user = session.exec(select(User).where(User.email == payload.get("email"))).first()
         if not user:
             raise HTTPException(status_code=401, detail="user not found")
         request.state.auth_user = user
+        response.set_cookie(key="auth_token", 
+                            value=request.cookies.get("auth_token"), 
+                            httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
+                            samesite=os.getenv("COOKIE_SAMESITE"))
     except ExpiredSignatureError:
         try:
-            new_access_token = refresh_access_token(access_token)
+            new_access_token, new_refresh_token = refresh_access_token(refresh_token)
             payload = verify_access_token(new_access_token)
             user = session.exec(select(User).where(User.email == payload.get("email"))).first()
             if not user:
                 raise HTTPException(status_code=401, detail="user not found")
             request.state.auth_user = user 
-            signed_new_access_token = sign_cookie(new_access_token)
-            response.set_cookie(key="access_token", 
-                                value=signed_new_access_token, 
+            value = sign_cookie({"access_token": new_access_token, "refresh_token": new_refresh_token})
+            response.set_cookie(key="auth_token", 
+                                value=value, 
                                 httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
                                 samesite=os.getenv("COOKIE_SAMESITE"))
         except ExpiredRefreshTokenError:

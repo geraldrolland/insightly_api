@@ -1,19 +1,18 @@
-from celery import uuid
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from unittest import TestCase
+
+import jwt
 from insightly_api.dependencies import get_session
 from insightly_api.models.user_model import User
 from sqlmodel import select
-import os
-from dotenv import load_dotenv
-from pathlib import Path
 from insightly_api.db_config import get_engine,  SQLModel
 from insightly_api.dependencies import get_test_session, get_session
 from insightly_api.main import app
+from insightly_api.core.settings import settings
 
-env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(env_path)
-os.environ["ENVIRONMENT"] = "test"
+
+settings.ENVIRONMENT = "test"
 engine = get_engine()
 session = get_test_session()
 app.dependency_overrides[get_session] = lambda: session
@@ -123,11 +122,11 @@ class TestLoginEndpoint(TestCase):
         self.assertEqual(response.status_code, 401)
     
     def test_with_valid_credentials(self):
-        from insightly_api.utils import hash_password
+        from insightly_api.utils import hash
         # First, create a user in the database
         user = User(
             email="testuser@example.com",
-            hashed_password=hash_password("HashedPassword123$"),
+            hashed_password=hash("HashedPassword123$"),
             agree_toTermsAndPolicy=True,
             is_active=True,
             is_email_verified=True,
@@ -142,7 +141,7 @@ class TestLoginEndpoint(TestCase):
         }
         response = self.client.post(self.api_url, json=payload)
         self.assertEqual(response.status_code, 200)
-        self.assertIsNotNone(response.cookies.get("access_token"))
+        self.assertIsNotNone(response.cookies.get("auth_token"))
 
     def tearDown(self):
         self.session.close()
@@ -261,12 +260,14 @@ class TestPasswordResetEndpoint(TestCase):
     
     def test_with_valid_payload_with_validallowtoken_in_cookie(self):
         from insightly_api.main import redis_client
-        from insightly_api.utils import hash_password, sign_cookie, verify_password
+        from insightly_api.utils import hash, sign_cookie, verify_hash
         import uuid
+        from unittest.mock import patch
+
 
         user = User(
             email="testuser@example.com",
-            hashed_password=hash_password("Testpassword123$"),
+            hashed_password=hash("Testpassword123$"),
             agree_toTermsAndPolicy=True,
             is_email_verified=True,
             is_MFA_enabled=False
@@ -285,7 +286,7 @@ class TestPasswordResetEndpoint(TestCase):
         email = redis_client.get(allow_pswd_reset_token)
         self.assertIsNone(email)
         user = self.session.exec(self.select(User).where(User.email == "testuser@example.com")).one()
-        self.assertTrue(verify_password(payload.get("password"), user.hashed_password))
+        self.assertTrue(verify_hash(payload.get("password"), user.hashed_password))
 
     def tearDown(self):
         self.session.close()
@@ -335,13 +336,13 @@ class TestOTPVerificationEndpoint(TestCase):
     def test_with_valid_otp_code_and_token(self):
         from insightly_api.main import redis_client
         from insightly_api.utils import generate_otp
-        from insightly_api.utils import hash_password, sign_cookie
+        from insightly_api.utils import hash, sign_cookie
         import uuid
         import json
 
         user = User(
             email="testuser@example.com",
-            hashed_password=hash_password("Testpassword123$"),
+            hashed_password=hash("Testpassword123$"),
             agree_toTermsAndPolicy=True,
             is_email_verified=True,
             is_MFA_enabled=True
@@ -359,18 +360,18 @@ class TestOTPVerificationEndpoint(TestCase):
         self.client.cookies.set("otp_ctx", value)
         response = self.client.post(self.api_url, json={"otp_code": otp_code})
         self.assertEqual(response.status_code, 200)
-        self.assertIsNotNone(response.cookies.get("access_token"))
+        self.assertIsNotNone(response.cookies.get("auth_token"))
 
     def test_exceed_maximum_retry(self):
         from insightly_api.main import redis_client
         from insightly_api.utils import generate_otp
-        from insightly_api.utils import hash_password, sign_cookie
+        from insightly_api.utils import hash, sign_cookie
         import uuid
         import json
 
         user = User(
             email="testuser@example.com",
-            hashed_password=hash_password("Testpassword123$"),
+            hashed_password=hash("Testpassword123$"),
             agree_toTermsAndPolicy=True,
             is_email_verified=True,
             is_MFA_enabled=True
@@ -419,12 +420,12 @@ class TestOTPResendEndpoint(TestCase):
         self.assertEqual(response.status_code, 401)
     
     def test_with_valid_otp_ctx_in_cookie(self):
-        from insightly_api.utils import hash_password, sign_cookie
+        from insightly_api.utils import hash, sign_cookie
         import uuid
         
         user = User(
             email="testuser@example.com",
-            hashed_password=hash_password("Testpassword123$"),
+            hashed_password=hash("Testpassword123$"),
             agree_toTermsAndPolicy=True,
             is_email_verified=True,
             is_MFA_enabled=True
@@ -443,13 +444,13 @@ class TestOTPResendEndpoint(TestCase):
     def test_with_active_otp_token(self):
         from insightly_api.main import redis_client
         from insightly_api.utils import generate_otp
-        from insightly_api.utils import hash_password, sign_cookie
+        from insightly_api.utils import hash, sign_cookie
         import uuid
         import json
         
         user = User(
             email="testuser@example.com",
-            hashed_password=hash_password("Testpassword123$"),
+            hashed_password=hash("Testpassword123$"),
             agree_toTermsAndPolicy=True,
             is_email_verified=True,
             is_MFA_enabled=True
@@ -474,6 +475,104 @@ class TestOTPResendEndpoint(TestCase):
         SQLModel.metadata.drop_all(engine)
         return super().tearDown()
 
+
+class GetCurrentUserEndpoint(TestCase):
+    def setUp(self):
+        from insightly_api.main import app
+        from sqlmodel import  Session
+        
+
+        SQLModel.metadata.create_all(engine)
+        self.client = TestClient(app)
+        self.session = session
+        self.select = select
+        self.api_url = "/api/v1/auth/me"
+        return super().setUp()
+    
+    def test_without_auth_token_cookie(self):
+        response = self.client.get(self.api_url)
+        self.assertEqual(response.status_code, 401)
+    
+    def test_with_invalid_auth_token_cookie(self):
+        self.client.cookies.set("auth_token", "invalidtoken")
+        response = self.client.get(self.api_url)
+        self.assertEqual(response.status_code, 401)
+    
+    def test_with_valid_auth_token_cookie(self):
+        from insightly_api.utils import hash, sign_cookie, generate_access_token
+
+        user = User(
+            email="testuser@example.com",
+            hashed_password=hash("Testpassword123$"),
+            agree_toTermsAndPolicy=True,
+            is_email_verified=True,
+            is_MFA_enabled=True
+        )
+        self.session.add(user)
+        self.session.commit()
+        access_token, refresh_token = generate_access_token({"email": user.email})
+        value = sign_cookie({"access_token": access_token, "refresh_token": refresh_token})
+        self.client.cookies.set("auth_token", value)
+        response = self.client.get(self.api_url)
+        self.assertIsNotNone(response.cookies.get("auth_token"))
+        self.assertEqual(response.status_code, 200)
+    
+    def test_with_expired_access_token_in_auth_token_cookie(self):
+        from insightly_api.utils import hash, sign_cookie, generate_access_token, verify_signed_cookie
+        import jwt
+        from unittest.mock import patch
+
+        user = User(
+            email="testuser@example.com",
+            hashed_password=hash("Testpassword123$"),
+            agree_toTermsAndPolicy=True,
+            is_email_verified=True,
+            is_MFA_enabled=True
+        )
+        self.session.add(user)
+        self.session.commit()
+        access_token, refresh_token = generate_access_token({"email": user.email})
+        value = sign_cookie({"access_token": access_token, "refresh_token": refresh_token})
+        
+        # helper to simulate first call raising, second call succeeds
+        def fake_verify_access_token(token):
+            if token == access_token:
+                raise jwt.ExpiredSignatureError
+            return {"email": "testuser@example.com"}  # payload for new token
+        
+        with patch("insightly_api.dependencies.verify_access_token", side_effect=fake_verify_access_token):
+            self.client.cookies.set("auth_token", value)
+            response = self.client.get(self.api_url)
+        self.assertEqual(response.status_code, 200)
+        new_access_token = verify_signed_cookie(response.cookies.get("auth_token")).get("access_token")
+        self.assertNotEqual(access_token, new_access_token)
+    
+    def test_with_expired_refresh_token_in_auth_token_cookie(self):
+        from insightly_api.utils import hash, sign_cookie, generate_access_token
+        from insightly_api.exceptions import ExpiredRefreshTokenError
+
+        user = User(
+            email="testuser@example.com",
+            hashed_password=hash("Testpassword123$"),
+            agree_toTermsAndPolicy=True,
+            is_email_verified=True,
+            is_MFA_enabled=True
+        )
+        self.session.add(user)
+        self.session.commit()
+        access_token, refresh_token = generate_access_token({"email": user.email})
+        value = sign_cookie({"access_token": access_token, "refresh_token": refresh_token})
+        with patch("insightly_api.dependencies.verify_access_token", side_effect=jwt.ExpiredSignatureError):
+            with patch("insightly_api.dependencies.refresh_access_token", side_effect=ExpiredRefreshTokenError):
+                self.client.cookies.set("auth_token", value)
+                response = self.client.get(self.api_url)
+        self.assertEqual(response.status_code, 401)
+
+    
+    def tearDown(self):
+        self.session.close()
+        SQLModel.metadata.drop_all(engine)
+        return super().tearDown()
 
 class TestEnableMFAEndpoint(TestCase):
     def setUp(self):

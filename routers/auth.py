@@ -9,7 +9,7 @@ from insightly_api.dependencies import check_agreetoTermsandPolicy, authenticate
 from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, TokenType
 from fastapi.exceptions import HTTPException
 from insightly_api.models.user_model import User
-from insightly_api.utils import hash_password, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token, generate_otp, verify_password, sign_cookie, verify_signed_cookie
+from insightly_api.utils import hash, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token, generate_otp, verify_hash, sign_cookie, verify_signed_cookie
 from insightly_api.tasks.email import send_verification_email, send_otp_email, send_welcome_email
 from dotenv import load_dotenv
 import os
@@ -33,7 +33,7 @@ async def register_user(data: Annotated[UserRegistrationType, Depends(check_agre
     user = session.exec(select(User).where(User.email == data.email)).first()
     if user:
         raise HTTPException(status_code=400, detail="user with this email already exists")
-    user = User(email=data.email, hashed_password=hash_password(data.password), 
+    user = User(email=data.email, hashed_password=hash(data.password), 
                 agree_toTermsAndPolicy=data.agree_toTermsAndPolicy)
     session.add(user)
     session.commit()
@@ -53,7 +53,7 @@ async def login_user(data: UserLoginType,
     user = session.exec(select(User).where(User.email == data.email)).first()
     if not user:
         raise HTTPException(status_code=401, detail="invalid email or password")
-    if not verify_password(data.password, user.hashed_password):
+    if not verify_hash(data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="invalid email or password")
     if user.is_email_verified == False:
         verification_link = generate_verification_link(user.email, next="login")
@@ -85,10 +85,10 @@ async def login_user(data: UserLoginType,
         "id": user.id,
         "email": user.email
     }
-    access_token = generate_access_token(payload)
+    access_token, refresh_token = generate_access_token(payload)
 
-    response.set_cookie(key="access_token", 
-                        value=sign_cookie(access_token),
+    response.set_cookie(key="auth_token", 
+                        value=sign_cookie({"access_token": access_token, "refresh_token": refresh_token}),
                         httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
                         samesite=os.getenv("COOKIE_SAMESITE"))
 
@@ -123,7 +123,7 @@ async def reset_password(data: Annotated[PasswordChangeType, Body()],
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="permission denied for a password reset")
     user = session.exec(select(User).where(User.email == email)).first()
-    hashed_pswd = hash_password(data.password)
+    hashed_pswd = hash(data.password)
     user.hashed_password = hashed_pswd
     session.add(user)
     session.commit()
@@ -203,16 +203,15 @@ def verify_otp(otp_code: Annotated[str, Body(embed=True)],
         "id": user.id,
         "email": user.email
     }
-    access_token = generate_access_token(payload)
-    response.set_cookie(key="access_token", 
-                        value=sign_cookie(access_token),
+    access_token, refresh_token = generate_access_token(payload)
+    response.set_cookie(key="auth_token", 
+                        value=sign_cookie({"access_token": access_token, "refresh_token": refresh_token}),
                         httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
                         samesite=os.getenv("COOKIE_SAMESITE"))
     return {"detail": "otp verified successfully"}
 
 @router.get("/resend-otp", status_code=status.HTTP_200_OK, description="resend new otp to users")
 def resend_otp(response: Response,
-               request: Request, 
                session: Annotated[Session, Depends(get_session)], 
                otp_ctx: Annotated[str, Cookie()]):
     from insightly_api.main import redis_client
