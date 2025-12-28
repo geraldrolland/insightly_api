@@ -31,18 +31,18 @@ def google_auth(request: Request, session: Annotated[Session, Depends(get_sessio
     current = None
     next = None
     if not state:
-        return RedirectResponse(url=f"{settings.FRONTEND_HOST}?google_auth=failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return RedirectResponse(url=f"{settings.APP_HOST}?google_auth=failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     current, next = state.split("|")
     if not current or not next:
-        return RedirectResponse(url=f"{settings.FRONTEND_HOST}?google_auth=failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return RedirectResponse(url=f"{settings.APP_HOST}?google_auth=failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     if error or not code:
-        return RedirectResponse(url=f"{settings.FRONTEND_HOST}?auth_state={current}&google_auth=failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return RedirectResponse(url=f"{settings.APP_HOST}?auth_state={current}&google_auth=failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     try:
         user = login_with_google(code, session)
     except Exception as e:
-        return RedirectResponse(url=f"{settings.FRONTEND_HOST}?auth_state={current}&google_auth=failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
-    response = RedirectResponse(url=f"{settings.FRONTEND_HOST}?auth_state={next}&google_auth=success", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return RedirectResponse(url=f"{settings.APP_HOST}?auth_state={current}&google_auth=failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    response = RedirectResponse(url=f"{settings.APP_HOST}?auth_state={next}&google_auth=success", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     access, refresh = generate_access_token({"email": user.email})
     value = sign_cookie({"access_token": access, "refresh_token": refresh})
     response.set_cookie(key="auth_token", 
