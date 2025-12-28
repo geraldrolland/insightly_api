@@ -28,10 +28,7 @@ async def authenticate_user(request: Request, response: Response, session: Annot
     from jwt.exceptions import ExpiredSignatureError
     from .models.user_model import User
     from insightly_api.exceptions import ExpiredRefreshTokenError
-    from dotenv import load_dotenv
-    import os
-
-    load_dotenv(".env")
+    from insightly_api.core.settings import settings
 
     try:
         payload = verify_signed_cookie(request.cookies.get("auth_token"))
@@ -47,8 +44,8 @@ async def authenticate_user(request: Request, response: Response, session: Annot
         request.state.auth_user = user
         response.set_cookie(key="auth_token", 
                             value=request.cookies.get("auth_token"), 
-                            httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
-                            samesite=os.getenv("COOKIE_SAMESITE"))
+                            httponly=True, secure=bool(settings.COOKIE_SECURE), 
+                            samesite=settings.COOKIE_SAMESITE)
     except ExpiredSignatureError:
         try:
             new_access_token, new_refresh_token = refresh_access_token(refresh_token)
@@ -60,8 +57,8 @@ async def authenticate_user(request: Request, response: Response, session: Annot
             value = sign_cookie({"access_token": new_access_token, "refresh_token": new_refresh_token})
             response.set_cookie(key="auth_token", 
                                 value=value, 
-                                httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
-                                samesite=os.getenv("COOKIE_SAMESITE"))
+                                httponly=True, secure=settings.COOKIE_SECURE, 
+                                samesite=settings.COOKIE_SAMESITE)
         except ExpiredRefreshTokenError:
             raise HTTPException(status_code=401, detail="refresh token expired. please login again")
     except Exception as e:

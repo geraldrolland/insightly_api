@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     email: str = Field(index=True, unique=True)
-    hashed_password: str
+    hashed_password: str = Field(nullable=False)
     agree_toTermsAndPolicy: bool
     is_active: bool = Field(default=True)
     is_email_verified: bool = Field(default=False)

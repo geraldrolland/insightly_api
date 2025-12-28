@@ -1,7 +1,6 @@
-from fastapi import APIRouter, Body, Header, Query, Cookie, Response
+from fastapi import APIRouter, Body, Query, Cookie, Response
 from fastapi.responses import RedirectResponse
 from typing import Annotated
-
 from fastapi import status, Depends
 from sqlmodel import Session, select
 from insightly_api.dependencies import get_session
@@ -9,16 +8,13 @@ from insightly_api.dependencies import check_agreetoTermsandPolicy, authenticate
 from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, TokenType
 from fastapi.exceptions import HTTPException
 from insightly_api.models.user_model import User
-from insightly_api.utils import hash, verify_access_token, refresh_access_token, generate_verification_link, generate_access_token, generate_otp, verify_hash, sign_cookie, verify_signed_cookie
+from insightly_api.utils import hash, verify_access_token, generate_verification_link, generate_access_token, generate_otp, verify_hash, sign_cookie, verify_signed_cookie
 from insightly_api.tasks.email import send_verification_email, send_otp_email, send_welcome_email
-from dotenv import load_dotenv
-import os
+from insightly_api.core.settings import settings
 import uuid
-from jwt.exceptions import InvalidTokenError, DecodeError, ExpiredSignatureError 
-from insightly_api.exceptions import ExpiredRefreshTokenError
 from fastapi import Request
 
-load_dotenv('.env')
+
 
 router = APIRouter(
     prefix="/api/v1/auth",
@@ -71,13 +67,13 @@ async def login_user(data: UserLoginType,
         value = sign_cookie(payload)
         body = {"otp": otp_code}
         send_otp_email.delay(user.email, body)
-        redirect_url = f"{os.getenv("APP_HOST")}?auth_state=otp-verification"
+        redirect_url = f"{settings.APP_HOST}?auth_state=otp-verification"
         response = RedirectResponse(redirect_url)
         response.set_cookie(key="otp_ctx", 
                             value=value, 
                             httponly=True, 
-                            secure=bool(os.getenv("COOKIE_SECURE")), 
-                            samesite=os.getenv("COOKIE_SAMESITE"),
+                            secure=bool(settings.COOKIE_SECURE), 
+                            samesite=settings.COOKIE_SAMESITE,
                             )
         return response
     
@@ -89,8 +85,8 @@ async def login_user(data: UserLoginType,
 
     response.set_cookie(key="auth_token", 
                         value=sign_cookie({"access_token": access_token, "refresh_token": refresh_token}),
-                        httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
-                        samesite=os.getenv("COOKIE_SAMESITE"))
+                        httponly=True, secure=bool(settings.COOKIE_SECURE), 
+                        samesite=settings.COOKIE_SAMESITE)
 
     return {"detail": "user logged in successfully"}
 
@@ -160,9 +156,9 @@ async def verify_email(query: Annotated[TokenType, Query()],
         password_reset_token = str(uuid.uuid4())
         signed_password_reset_token = sign_cookie(password_reset_token)
         redis_client.set(name=password_reset_token, value=email, ex=10*60)
-        redirect_url = f"{os.getenv('APP_HOST')}?auth_state=reset-password"
+        redirect_url = f"{settings.APP_HOST}?auth_state=reset-password"
         response = RedirectResponse(redirect_url)
-        response.set_cookie(key="allow_pswd_reset_token", value=signed_password_reset_token, httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), samesite=os.getenv("COOKIE_SAMESITE"))
+        response.set_cookie(key="allow_pswd_reset_token", value=signed_password_reset_token, httponly=True, secure=bool(settings.COOKIE_SECURE), samesite=settings.COOKIE_SAMESITE)
         return response
     
     return {"detail": "email verified successfully"}
@@ -206,8 +202,8 @@ def verify_otp(otp_code: Annotated[str, Body(embed=True)],
     access_token, refresh_token = generate_access_token(payload)
     response.set_cookie(key="auth_token", 
                         value=sign_cookie({"access_token": access_token, "refresh_token": refresh_token}),
-                        httponly=True, secure=bool(os.getenv("COOKIE_SECURE")), 
-                        samesite=os.getenv("COOKIE_SAMESITE"))
+                        httponly=True, secure=settings.COOKIE_SECURE, 
+                        samesite=settings.COOKIE_SAMESITE)
     return {"detail": "otp verified successfully"}
 
 @router.get("/resend-otp", status_code=status.HTTP_200_OK, description="resend new otp to users")
@@ -234,19 +230,21 @@ def resend_otp(response: Response,
     response.set_cookie(key="otp_ctx", 
                         value=sign_cookie(payload), 
                         httponly=True, 
-                        secure=bool(os.getenv("COOKIE_SECURE")), 
-                        samesite=os.getenv("COOKIE_SAMESITE"),
+                        secure=bool(settings.COOKIE_SECURE), 
+                        samesite=settings.COOKIE_SAMESITE,
                         )
     body = {"otp": otp_code}
     send_otp_email.delay(user.email, body)
     return {"detail": "otp sent successfully"}
 
-@router.get("/enable-mfa", 
+@router.put("/enable-mfa", 
             status_code=status.HTTP_200_OK, 
             description="enable multifactor authentication",
             dependencies=[Depends(authenticate_user)]
             )
-def enable_mfa(request: Request, session: Annotated[Session, Depends(get_session)]):
+def enable_mfa(enable_mfa: Annotated[bool, Body(embed=True)] ,request: Request, session: Annotated[Session, Depends(get_session)]):
+    if enable_mfa == False:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"must set enbale mfa to true"})
     user = request.state.auth_user
     if user.is_MFA_enabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is already enabled for this user")
@@ -256,7 +254,7 @@ def enable_mfa(request: Request, session: Annotated[Session, Depends(get_session
     return {"detail": "multifactor authentication enabled successfully"}
     
     
-@router.get("/disable-mfa", 
+@router.delete("/disable-mfa", 
             status_code=status.HTTP_200_OK, 
             description="disable multifactor authentication",
             dependencies=[Depends(authenticate_user)]
@@ -264,7 +262,7 @@ def enable_mfa(request: Request, session: Annotated[Session, Depends(get_session
 def disable_mfa(request: Request, session: Annotated[Session, Depends(get_session)]):
     user = request.state.auth_user
     if not user.is_MFA_enabled:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is already disabled for this user")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is already disabled")
     user.is_MFA_enabled = False
     session.add(user)
     session.commit()
@@ -286,11 +284,10 @@ def status_mfa(request: Request):
             )
 def logout_user(request: Request, response: Response):
     from insightly_api.main import redis_client
-    refresh_token = redis_client.get(verify_signed_cookie(request.cookies.get("access_token")))
-    redis_client.delete(refresh_token)
-    redis_client.delete(verify_signed_cookie(request.cookies.get("access_token")))
-    response.delete_cookie(key="access_token")
-    return {"detail": "user logged out successfully"}
-    
 
-    
+    auth_token = request.cookies.get("auth_token")
+    refresh_token = verify_signed_cookie(auth_token).get("refresh_token")
+    payload = verify_access_token(refresh_token)
+    redis_client.delete(payload.get("session_id"))
+    response.set_cookie(key="auth_token", value="", expires=0)
+    return {"detail": "user logged out successfully"}

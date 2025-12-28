@@ -1,4 +1,4 @@
-from sqlmodel import create_engine, SQLModel
+from sqlmodel import create_engine
 from insightly_api.core.settings import settings
 
 
@@ -9,11 +9,5 @@ postgresql_test_url = "postgresql+psycopg2://testuser:testpassword@localhost/tes
 connect_args = {"check_same_thread": False}
 
 def get_engine():
-    engine = None
+    return create_engine(postgresql_url, future=True)
 
-    if settings.ENVIRONMENT == "dev":
-        engine = create_engine(postgresql_url, future=True)
-    elif settings.ENVIRONMENT == "test":
-        engine = create_engine(postgresql_test_url, future=True)
-    
-    return engine

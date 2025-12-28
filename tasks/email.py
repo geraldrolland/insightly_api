@@ -1,11 +1,5 @@
-import os
-from dotenv import load_dotenv
 from insightly_api.celery_worker import celery
-
-
-dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
-
-load_dotenv(dotenv_path)
+from insightly_api.core.settings import settings
 
 @celery.task(
         name="send_verification_email",
@@ -29,8 +23,8 @@ def send_welcome_email(email: str):
     from insightly_api.utils import send_mail, log_to_file
 
     body = {
-        "login_url": f"{os.getenv("APP_HOST")}?auth_state=login",
-        "support_center_url": f"{os.getenv("APP_HOST")}/support-center"
+        "login_url": f"{settings.APP_HOST}?auth_state=login",
+        "support_center_url": f"{settings.APP_HOST}/support-center"
     }
     try:
         send_mail(email, "Welcome To Insightly", "welcome_email.html", body)

@@ -17,19 +17,19 @@ class BaseUser(BaseModel):
     confirm_password: str = Field(..., min_length=8, description="password must be at least 8 characters long", examples=["strongpassword123"])
 
     @model_validator(mode="after")
-    def validate_passwordmatch(cls, data):
-        if not re.search(r"[a-z]", data.password):
+    def validate_passwordmatch(self):
+        if not re.search(r"[a-z]", self.password):
             raise ValueError("Password must contain at least one lowercase letter")
-        if not re.search(r"[A-Z]", data.password):
+        if not re.search(r"[A-Z]", self.password):
             raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"\d", data.password):
+        if not re.search(r"\d", self.password):
             raise ValueError("Password must contain at least one digit")
-        if not re.search(r"[^A-Za-z0-9]", data.password):
+        if not re.search(r"[^A-Za-z0-9]", self.password):
             raise ValueError("Password must contain at least one special character")
-        if data.password != data.confirm_password:
+        if self.password != self.confirm_password:
             raise ValueError("password and confirm password do not match")
-        return data
-
+        return self
+    
 class UpdateUserType(BaseModel):
     email: str = Field(default=None, pattern=r'^[\w\.-]+@[\w\.-]+\.\w{2,4}$', description="must be a valid email address", examples=["user@example.com"])
     password: str = Field(default=None, min_length=8, description="password must be at least 8 characters long", examples=["strongpassword123$P"])
@@ -41,8 +41,6 @@ class UserRegistrationType(BaseUser):
 
     email: str = Field(..., pattern=r'^[\w\.-]+@[\w\.-]+\.\w{2,4}$', description="must be a valid email address", examples=["user@example.com"])
     agree_toTermsAndPolicy: bool = Field(..., description="must be true to proceed with registration", examples=[True])
-
-
  
 # user login and password change types
 class UserLoginType(BaseModel):

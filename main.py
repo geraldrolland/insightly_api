@@ -18,12 +18,9 @@ redis_client = redis.Redis(
 async def lifespan(app: FastAPI):
     from sqlmodel import SQLModel
     from .db_config import get_engine
-    from dotenv import load_dotenv
-    import os
+    from .core.settings import settings
 
-    load_dotenv(".env")
-
-    if os.getenv("ENVIRONMENT") == "dev":
+    if settings.ENVIRONMENT == "dev":
         SQLModel.metadata.create_all(get_engine())
     yield
     redis_client.close()
