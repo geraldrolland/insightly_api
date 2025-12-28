@@ -3,7 +3,6 @@ from fastapi.testclient import TestClient
 from insightly_api.core import settings
 from insightly_api.dependencies import get_session
 from insightly_api.models.user_model import User
-from sqlmodel import select
 from insightly_api.main import app
 
 postgresql_test_url = "postgresql+psycopg2://testuser:testpassword@localhost/test_db"

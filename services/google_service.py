@@ -35,7 +35,7 @@ def google_get_user_info(access_token: str) -> dict[str, Any]:
 
 def login_with_google(code, session):
     domain = settings.API_HOST
-    redirect_uri = f'{domain}/api/google-auth'
+    redirect_uri = f'{domain}/api/v1/google-auth'
     
     access_token = google_get_access_token(code=code, redirect_uri=redirect_uri)
     user_data = google_get_user_info(access_token=access_token)
