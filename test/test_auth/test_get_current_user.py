@@ -2,7 +2,7 @@ from unittest.mock import patch
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from insightly_api.core import settings
+from insightly_api.core.settings import settings
 from insightly_api.dependencies import get_session
 from insightly_api.models.user_model import User
 from insightly_api.main import app
@@ -81,13 +81,15 @@ def test_with_expired_access_token_in_auth_token_cookie(client, api_url, session
     session.add(user)
     session.commit()
     access_token, refresh_token = generate_access_token({"email": user.email})
+
     value = sign_cookie({"access_token": access_token, "refresh_token": refresh_token})
         
         # helper to simulate first call raising, second call succeeds
     def fake_verify_access_token(token):
+
         if token == access_token:
             raise jwt.ExpiredSignatureError
-        return {"email": "testuser@example.com"}  # payload for new token
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         
     with patch("insightly_api.dependencies.verify_access_token", side_effect=fake_verify_access_token):
         client.cookies.set("auth_token", value)

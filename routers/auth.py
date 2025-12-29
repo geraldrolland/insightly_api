@@ -5,7 +5,7 @@ from fastapi import status, Depends
 from sqlmodel import Session, select
 from insightly_api.dependencies import get_session
 from insightly_api.dependencies import check_agreetoTermsandPolicy, authenticate_user
-from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, TokenType
+from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, TokenType, EnableMFAType
 from fastapi.exceptions import HTTPException
 from insightly_api.models.user_model import User
 from insightly_api.utils import hash, verify_access_token, generate_verification_link, generate_access_token, generate_otp, verify_hash, sign_cookie, verify_signed_cookie
@@ -242,12 +242,12 @@ def resend_otp(response: Response,
             description="enable multifactor authentication",
             dependencies=[Depends(authenticate_user)]
             )
-def enable_mfa(enable_mfa: Annotated[bool, Body(embed=True)] ,request: Request, session: Annotated[Session, Depends(get_session)]):
-    if enable_mfa == False:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"must set enbale mfa to true"})
+def enable_mfa(data: Annotated[EnableMFAType, Body()], request: Request, session: Annotated[Session, Depends(get_session)]):
+    if data.enable_mfa == False:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="must set enable MFA to true")
     user = request.state.auth_user
     if user.is_MFA_enabled:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="multifactor authentication is already enabled for this user")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is already enabled")
     user.is_MFA_enabled = True
     session.add(user)
     session.commit()
@@ -268,7 +268,7 @@ def disable_mfa(request: Request, session: Annotated[Session, Depends(get_sessio
     session.commit()
     return {"detail": "multifactor authentication disabled successfully"}
 
-@router.get("/status-mfa", 
+@router.get("/mfa-status", 
             status_code=status.HTTP_200_OK, 
             description="multifactor authentication status",
             dependencies=[Depends(authenticate_user)]

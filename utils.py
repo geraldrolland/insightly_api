@@ -33,20 +33,32 @@ def generate_access_token(data: dict):
     import uuid
     import json
 
-    to_encode = data.copy()
+
     session_id = str(uuid.uuid4())
     access_token_expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     refresh_token_expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": access_token_expire})
-    access_token = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    refresh_token = jwt.encode({"exp": refresh_token_expire, "session_id": session_id}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    to_encode.pop("exp", None)
-    to_encode.update({"hashed_refresh_token": hash(refresh_token)})
-    redis_client.set(name=session_id, value=json.dumps(to_encode), ex=3600*24*3)
+
+    access_token_payload = {
+        "exp": access_token_expire,
+        "sid": session_id,
+        "type": "access_token"
+    }
+
+    refresh_token_payload = {
+        "exp": refresh_token_expire,
+        "sid": session_id,
+        "type": "refresh_token"
+    }
+    access_token = jwt.encode(access_token_payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    refresh_token = jwt.encode(refresh_token_payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    redis_client.set(name=f'session:{session_id}', value=json.dumps(data), ex=3600*24*settings.REFRESH_TOKEN_EXPIRE_DAYS)
     return access_token, refresh_token
 
 def verify_access_token(token: str):
+    from insightly_api.core.settings import settings
     payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    if payload.get("type") != "access_token":
+        raise ValueError("invalid access token")
     return payload
 
 def refresh_access_token(refresh_token: str):
@@ -60,18 +72,31 @@ def refresh_access_token(refresh_token: str):
         payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     except jwt.ExpiredSignatureError:
         raise ExpiredRefreshTokenError("refresh token has expired, please log in again")
-    session_id = payload.get("session_id")
-    stored_data = json.loads(redis_client.get(session_id))
-    if not verify_hash(refresh_token, stored_data.get("hashed_refresh_token")):
-        raise ExpiredRefreshTokenError("refresh token is invalid, please log in again")
-    payload = stored_data.copy()
-    payload.pop("hashed_refresh_token", None)
-    new_access_token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    if payload.get("type") != "refresh_token":
+        raise ExpiredRefreshTokenError("invalid refresh token, please log in again")
+    session_id = payload.get("sid")
+    stored_data = redis_client.get(session_id)
+    if not stored_data:
+        raise ExpiredRefreshTokenError("refresh token session has expired, please log in again")
+    stored_data = json.loads(stored_data)
     new_session_id = str(uuid.uuid4())
-    new_refresh_token_expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    new_refresh_token = jwt.encode({"exp": new_refresh_token_expire, "session_id": new_session_id}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    redis_client.set(name=new_session_id, value=json.dumps(stored_data.update({"hashed_refresh_token": hash(new_refresh_token)})), ex=3600*24*3)
-    redis_client.delete(session_id)
+    access_token_expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    refresh_token_expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+    refresh_token_payload = {
+        "exp": refresh_token_expire,
+        "sid": new_session_id,
+        "type": "refresh_token"
+    }
+    access_token_payload = {
+        "exp": access_token_expire,
+        "sid": new_session_id,
+        "type": "access_token"
+    }
+    new_access_token = jwt.encode(access_token_payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    new_refresh_token = jwt.encode(refresh_token_payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    redis_client.delete(name=f'session:{session_id}')
+    redis_client.set(name=f'session:{new_session_id}', value=json.dumps(stored_data), ex=3600*24*settings.REFRESH_TOKEN_EXPIRE_DAYS)
     return new_access_token, new_refresh_token
 
 def generate_verification_link(email: str, next: str):

@@ -58,3 +58,7 @@ class TokenType(BaseModel):
     token: str
     next: str
 
+class EnableMFAType(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    enable_mfa: bool

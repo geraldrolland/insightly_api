@@ -29,6 +29,8 @@ async def authenticate_user(request: Request, response: Response, session: Annot
     from .models.user_model import User
     from insightly_api.exceptions import ExpiredRefreshTokenError
     from insightly_api.core.settings import settings
+    from insightly_api.main import redis_client
+    import json
 
     try:
         payload = verify_signed_cookie(request.cookies.get("auth_token"))
@@ -38,7 +40,11 @@ async def authenticate_user(request: Request, response: Response, session: Annot
     refresh_token = payload.get("refresh_token")
     try:
         payload = verify_access_token(access_token)
-        user = session.exec(select(User).where(User.email == payload.get("email"))).first()
+        payload = redis_client.get(f'session:{payload.get("sid")}')
+        if not payload:
+            raise HTTPException(status_code=401, detail="access token expired")
+        email = json.loads(payload).get("email")
+        user = session.exec(select(User).where(User.email == email)).first()
         if not user:
             raise HTTPException(status_code=401, detail="user not found")
         request.state.auth_user = user
@@ -50,7 +56,11 @@ async def authenticate_user(request: Request, response: Response, session: Annot
         try:
             new_access_token, new_refresh_token = refresh_access_token(refresh_token)
             payload = verify_access_token(new_access_token)
-            user = session.exec(select(User).where(User.email == payload.get("email"))).first()
+            payload = redis_client.get(f'session:{payload.get("sid")}')
+            if not payload:
+                raise HTTPException(status_code=401, detail="refresh token expired. please login again")
+            email = json.loads(payload).get("email")
+            user = session.exec(select(User).where(User.email == email)).first()
             if not user:
                 raise HTTPException(status_code=401, detail="user not found")
             request.state.auth_user = user 
@@ -62,5 +72,5 @@ async def authenticate_user(request: Request, response: Response, session: Annot
         except ExpiredRefreshTokenError:
             raise HTTPException(status_code=401, detail="refresh token expired. please login again")
     except Exception as e:
-        raise HTTPException(status_code=401, detail="invalid access token cookie")
+        raise HTTPException(status_code=401, detail="invalid auth token")
     
