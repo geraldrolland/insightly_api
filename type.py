@@ -58,7 +58,12 @@ class TokenType(BaseModel):
     token: str
     next: str
 
-class EnableMFAType(BaseModel):
+class EmailType(BaseModel):
     model_config = {"extra": "forbid"}
 
-    enable_mfa: bool
+    email: str = Field(..., pattern=r'^[\w\.-]+@[\w\.-]+\.\w{2,4}$')
+
+class GoogleAuthParams(BaseModel):
+    code: str = Field(default=None)
+    error: str = Field(default=None)
+    state: str

@@ -9,6 +9,7 @@ import smtplib
 from email.mime.text import MIMEText
 from itsdangerous import URLSafeTimedSerializer
 from insightly_api.core.settings import settings
+from ua_parser import user_agent_parser
 
 
 
@@ -20,6 +21,13 @@ serializer = URLSafeTimedSerializer(
 
 password_hasher = PasswordHash.recommended()
 
+
+def normalize_user_agent(user_agent: str) -> str:
+    parser = user_agent_parser.Parse(user_agent)
+    browser = parser['user_agent']['family']
+    os = parser['os']['family']
+
+    return f"{browser}-{os}"
 
 def hash(password: str) -> str:
     return password_hasher.hash(password)
@@ -51,6 +59,7 @@ def generate_access_token(data: dict):
     }
     access_token = jwt.encode(access_token_payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     refresh_token = jwt.encode(refresh_token_payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    data["user-agent"] = hash(normalize_user_agent(data.get("user-agent")))
     redis_client.set(name=f'session:{session_id}', value=json.dumps(data), ex=3600*24*settings.REFRESH_TOKEN_EXPIRE_DAYS)
     return access_token, refresh_token
 
@@ -156,6 +165,7 @@ def sign_cookie(value: dict[str, any] | str) -> str:
 
 def verify_signed_cookie(signed_value: str, max_age: int = None) -> dict[str, any] | str:
     return serializer.loads(signed_value, max_age=max_age)
+
 
 
 

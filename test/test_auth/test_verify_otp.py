@@ -82,7 +82,7 @@ def test_with_valid_otp_code_and_token(client, api_url, session):
     session.commit()
     otp_code = generate_otp(length=6)
     otp_token = str(uuid.uuid4())
-    redis_client.set(name=otp_token, value=json.dumps({"otp_code": otp_code, "attempts": 0}), ex=2*60)
+    redis_client.set(name=otp_token, value=json.dumps({"otp_code_hash": hash(otp_code), "attempts": 0}), ex=2*60)
     payload = {
         "email": user.email,
         "otp_token": otp_token
@@ -111,7 +111,7 @@ def test_otp_retry(client, api_url, session):
     session.commit()
     otp_code = generate_otp(length=6)
     otp_token = str(uuid.uuid4())
-    redis_client.set(name=otp_token, value=json.dumps({"otp_code": otp_code, "attempts": 1}), ex=2*60)
+    redis_client.set(name=otp_token, value=json.dumps({"otp_code_hash": hash(otp_code), "attempts": 1}), ex=2*60)
     payload = {
         "email": user.email,
         "otp_token": otp_token
@@ -141,7 +141,7 @@ def test_exceed_maximum_retry(client, api_url, session):
     session.commit()
     otp_code = generate_otp(length=6)
     otp_token = str(uuid.uuid4())
-    redis_client.set(name=otp_token, value=json.dumps({"otp_code": otp_code, "attempts": 3}), ex=2*60)
+    redis_client.set(name=otp_token, value=json.dumps({"otp_code_hash": hash(otp_code), "attempts": 3}), ex=2*60)
     payload = {
         "email": user.email,
         "otp_token": otp_token

@@ -1,7 +1,7 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from insightly_api.routers import auth, projects
+from insightly_api.routers import auth, projects, google_auth
 from insightly_api.routers import auth
 import redis
 from contextlib import asynccontextmanager
@@ -46,6 +46,8 @@ origins = [
 # routers
 app.include_router(auth.router)
 app.include_router(projects.router)
+app.include_router(google_auth.router)
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

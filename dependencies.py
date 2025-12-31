@@ -4,7 +4,7 @@ from fastapi.exceptions import HTTPException
 from .db_config import get_engine
 from sqlmodel import  Session, select
 from fastapi import Request, Response, Depends
-from insightly_api.utils import verify_access_token, refresh_access_token, verify_signed_cookie, sign_cookie
+from insightly_api.utils import verify_access_token, refresh_access_token, verify_signed_cookie, sign_cookie, normalize_user_agent, verify_hash
 
 async def check_agreetoTermsandPolicy(data: UserRegistrationType):
     if data.agree_toTermsAndPolicy != True:
@@ -24,8 +24,9 @@ def get_test_session():
 
 
 async def authenticate_user(request: Request, response: Response, session: Annotated[Session, Depends(get_session)]):
+
     from fastapi.exceptions import HTTPException
-    from jwt.exceptions import ExpiredSignatureError
+    from jwt.exceptions import ExpiredSignatureError, DecodeError 
     from .models.user_model import User
     from insightly_api.exceptions import ExpiredRefreshTokenError
     from insightly_api.core.settings import settings
@@ -41,7 +42,10 @@ async def authenticate_user(request: Request, response: Response, session: Annot
     try:
         payload = verify_access_token(access_token)
         payload = redis_client.get(f'session:{payload.get("sid")}')
-        if not payload:
+        if not payload or not verify_hash(normalize_user_agent(request.headers.get("user-agent")), json.loads(payload).get("user-agent")):
+            response.set_cookie(key="auth_token", value="", expires=0)
+            if payload:
+                redis_client.delete(f'session:{json.loads(payload).get("sid")}')
             raise HTTPException(status_code=401, detail="access token expired")
         email = json.loads(payload).get("email")
         user = session.exec(select(User).where(User.email == email)).first()
@@ -57,7 +61,10 @@ async def authenticate_user(request: Request, response: Response, session: Annot
             new_access_token, new_refresh_token = refresh_access_token(refresh_token)
             payload = verify_access_token(new_access_token)
             payload = redis_client.get(f'session:{payload.get("sid")}')
-            if not payload:
+            if not payload or not verify_hash(normalize_user_agent(request.headers.get("user-agent")), json.loads(payload).get("user-agent")):
+                if payload:
+                    redis_client.delete(f'session:{json.loads(payload).get("sid")}')
+                response.set_cookie(key="auth_token", value="", expires=0)
                 raise HTTPException(status_code=401, detail="refresh token expired. please login again")
             email = json.loads(payload).get("email")
             user = session.exec(select(User).where(User.email == email)).first()

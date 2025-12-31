@@ -15,7 +15,7 @@ def client():
 
 @pytest.fixture(scope="module")
 def api_url():
-    return "api/v1/auth/enable-mfa"
+    return "api/v1/auth/logout"
 
 @pytest.fixture(autouse=True)
 def test_engine():
@@ -59,29 +59,17 @@ def user(client, session):
 def override_dependency(session):
     app.dependency_overrides[get_session] = lambda: session
 
-
-
-def test_without_auth_token_cookie(client, api_url):
-    client.cookies.delete("auth_token")
+def test_without_authtoken_in_cookie(client, api_url):
+    client.cookies.clear()
     response = client.post(api_url)
     assert response.status_code == 401
+
+def test_with_valid_auth_token_cookie(client, api_url):
+    response = client.post(api_url)
+    assert response.status_code == 200
+    assert response.json() == {"detail": "user logged out successfully"}
 
 def test_with_invalid_auth_token_cookie(client, api_url):
     client.cookies.set("auth_token", "invalidtoken")
     response = client.post(api_url)
     assert response.status_code == 401
-
-def test_with_enable_mfa_true(client, api_url, session, user):
-
-    response = client.post(api_url)
-    assert response.status_code == 200
-    session.refresh(user)
-    assert user.is_MFA_enabled is True
-
-def test_enable_mfa_already_enabled(client, api_url, session, user):
-    # First, ensure MFA is enabled
-    user.is_MFA_enabled = True
-    session.add(user)
-    session.commit()
-    response = client.post(api_url)
-    assert response.status_code == 400

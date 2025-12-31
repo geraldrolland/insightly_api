@@ -47,10 +47,13 @@ def user(client, session):
     )
     session.add(user)
     session.commit()
-    access_token, refresh_token = generate_access_token({"id": user.id, "email": user.email})
-    auth_token = sign_cookie({"access_token": access_token, "refresh_token": refresh_token})
-    client.cookies.set(name="auth_token", value=auth_token)
-    return user
+    with patch("insightly_api.utils.normalize_user_agent", side_effect=lambda user_agent: user_agent), patch("insightly_api.dependencies.normalize_user_agent", side_effect=lambda user_agent: user_agent):
+        access_token, refresh_token = generate_access_token({"id": user.id, "email": user.email, "user-agent": "test-agent"})
+        auth_token = sign_cookie({"access_token": access_token, "refresh_token": refresh_token})
+        client.cookies.set(name="auth_token", value=auth_token)
+        client.headers.update({"User-Agent": "test-agent"})
+
+        yield user
 
 @pytest.fixture(autouse=True)
 def override_dependency(session):

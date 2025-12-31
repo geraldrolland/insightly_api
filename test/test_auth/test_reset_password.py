@@ -3,7 +3,6 @@ from fastapi.testclient import TestClient
 from insightly_api.core import settings
 from insightly_api.dependencies import get_session, get_test_session
 from insightly_api.models.user_model import User
-from sqlmodel import select
 from insightly_api.main import app
 
 postgresql_test_url = "postgresql+psycopg2://testuser:testpassword@localhost/test_db"
@@ -94,7 +93,6 @@ def test_with_valid_payload_with_validallowtoken_in_cookie(client, api_url, sess
     from insightly_api.main import redis_client
     from insightly_api.utils import hash, sign_cookie, verify_hash
     import uuid
-    from unittest.mock import patch
 
 
     user = User(
@@ -117,5 +115,5 @@ def test_with_valid_payload_with_validallowtoken_in_cookie(client, api_url, sess
     assert response.status_code == 200
     email = redis_client.get(allow_pswd_reset_token)
     assert email is None
-    user = session.exec(select(User).where(User.email == "testuser@example.com")).one()
+    session.refresh(user)
     assert verify_hash(payload.get("password"), user.hashed_password) == True

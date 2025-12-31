@@ -4,6 +4,7 @@ from insightly_api.core.settings import settings
 import requests
 from insightly_api.models.user_model import User
 
+
 def google_get_access_token(code: str, redirect_uri: str) -> str:
     data = {
         'code': code,
@@ -45,7 +46,7 @@ def login_with_google(code, session):
     if not user:
         user = User(
             email=user_data['email'],
-            hashed_password=None,
+            hashed_password="",
             is_active=True,
             is_email_verified=True,
             is_MFA_enabled=False,

@@ -76,3 +76,23 @@ def test_with_valid_credentials(client, api_url, session):
     response = client.post(api_url, json=payload)
     assert response.status_code == 200
     assert response.cookies.get("auth_token") is not None
+
+def test_with_MFA_enabled_user(client, api_url, session):
+    from insightly_api.utils import hash
+        # First, create a user in the database
+    user = User(
+        email="testuser@example.com",
+        hashed_password=hash("HashedPassword123$"),
+        agree_toTermsAndPolicy=True,
+        is_active=True,
+        is_email_verified=True,
+        is_MFA_enabled=True
+        )
+    session.add(user)
+    session.commit()
+    payload = {
+        "email": user.email,
+        "password": "HashedPassword123$"
+    }
+    response = client.post(api_url, json=payload)
+    assert response.status_code == 404
