@@ -15,7 +15,7 @@ def client():
 def api_url():
     return "api/v1/auth/login"
 
-@pytest.fixture(scope="module")
+@pytest.fixture(autouse=True)
 def test_engine():
     from sqlmodel import SQLModel, create_engine
 

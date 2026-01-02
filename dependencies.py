@@ -1,12 +1,14 @@
+from fastapi import Form, UploadFile, File
 from insightly_api.utils import verify_signed_cookie
-from .type import UserRegistrationType, Annotated
+from .schema import UserRegistrationSchema, Annotated, Literal
 from fastapi.exceptions import HTTPException
 from .db_config import get_engine
 from sqlmodel import  Session, select
 from fastapi import Request, Response, Depends
 from insightly_api.utils import verify_access_token, refresh_access_token, verify_signed_cookie, sign_cookie, normalize_user_agent, verify_hash
+from insightly_api.schema import ProjectInfoSchema, FileUploadSchema, DatabaseConnectionSchema, APIIntegrationSchema
 
-async def check_agreetoTermsandPolicy(data: UserRegistrationType):
+async def check_agreetoTermsandPolicy(data: UserRegistrationSchema):
     if data.agree_toTermsAndPolicy != True:
         raise HTTPException(status_code=400, detail="user must agree to terms and policy before proceeding with registration")
     return data
@@ -80,4 +82,6 @@ async def authenticate_user(request: Request, response: Response, session: Annot
             raise HTTPException(status_code=401, detail="refresh token expired. please login again")
     except Exception as e:
         raise HTTPException(status_code=401, detail="invalid auth token")
-    
+
+
+

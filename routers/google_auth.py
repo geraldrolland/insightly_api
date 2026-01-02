@@ -8,7 +8,6 @@ from insightly_api.utils import  generate_access_token, sign_cookie
 from insightly_api.core.settings import settings
 from fastapi import Request
 from insightly_api.services.google_service import login_with_google
-from insightly_api.type import GoogleAuthParams
 
 
 
@@ -31,10 +30,8 @@ def google_auth(
     if error or not code:
         return RedirectResponse(url=f"{settings.APP_HOST}?msg=google authentication failed", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     try:
-        print("Logging in with google")
         user = login_with_google(code, session)
     except Exception as e:
-        print(f"Google login failed: {e}")
         return RedirectResponse(url=f"{settings.APP_HOST}?msg=google authentication failed&auth_state={state}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     response = RedirectResponse(url=f"{settings.APP_HOST}/dashboard/projects?msg=google authentication success", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     access, refresh = generate_access_token({"email": user.email, "id": user.id, "user-agent": user_agent})

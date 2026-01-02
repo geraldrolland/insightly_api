@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     CLIENT_SECRET: str
     GOOGLE_ACCESS_TOKEN_OBTAIN_URL: str
     GOOGLE_USER_INFO_URL: str
+    ALL_EXCLUDED_SQL_KEYWORDS: list[str] = [
+        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE", "REPLACE",
+        "GRANT", "REVOKE", "COMMIT", "ROLLBACK", "SAVEPOINT", "LOCK", "UNLOCK",
+        "MERGE", "CALL", "EXPLAIN", "DESCRIBE",
+        "SET", "SHOW", "USE",
+        
+    ]
 
     model_config = SettingsConfigDict(env_file=ENV_PATH)
 

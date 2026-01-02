@@ -5,7 +5,7 @@ from fastapi import status, Depends
 from sqlmodel import Session, select
 from insightly_api.dependencies import get_session
 from insightly_api.dependencies import check_agreetoTermsandPolicy, authenticate_user
-from insightly_api.type import PasswordChangeType, UserLoginType, UserRegistrationType, TokenType, EmailType
+from insightly_api.schema import PasswordChangeSchema, UserLoginSchema, UserRegistrationSchema, TokenSchema, EmailSchema
 from fastapi.exceptions import HTTPException
 from insightly_api.models.user_model import User
 from insightly_api.utils import hash, verify_access_token, generate_verification_link, generate_access_token, generate_otp, verify_hash, sign_cookie, verify_signed_cookie
@@ -23,7 +23,7 @@ router = APIRouter(
 
 @router.post("/register",  
                   status_code=status.HTTP_201_CREATED, description="allow user to register by providing email, password and confirm password for registraton")
-async def register_user(data: Annotated[UserRegistrationType, Depends(check_agreetoTermsandPolicy)], 
+async def register_user(data: Annotated[UserRegistrationSchema, Depends(check_agreetoTermsandPolicy)], 
                         session: Annotated[Session, Depends(get_session)]):
 
     user = session.exec(select(User).where(User.email == data.email)).first()
@@ -40,7 +40,7 @@ async def register_user(data: Annotated[UserRegistrationType, Depends(check_agre
 @router.post("/login", 
                   status_code=status.HTTP_200_OK, 
                   description="allow user to log in by providing email and password as authentication credential")
-async def login_user(data: UserLoginType, 
+async def login_user(data: UserLoginSchema, 
                      response: Response,
                      request: Request, 
                      session: Annotated[Session, Depends(get_session)]):
@@ -108,7 +108,7 @@ async def get_current_user(request: Request):
 @router.post("/reset-password", 
                   status_code=status.HTTP_200_OK, 
                   description="allow user to provide password and confirm password for password change")
-async def reset_password(data: Annotated[PasswordChangeType, Body()], 
+async def reset_password(data: Annotated[PasswordChangeSchema, Body()], 
                          allow_pswd_reset_token: Annotated[str, Cookie()], 
                          session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
@@ -130,7 +130,7 @@ async def reset_password(data: Annotated[PasswordChangeType, Body()],
 
 @router.post("/email", status_code=status.HTTP_200_OK, 
                   description="allow user to provide email for password change")
-async def user_email(data: Annotated[EmailType, Body()], session: Annotated[Session, Depends(get_session)]):
+async def user_email(data: Annotated[EmailSchema, Body()], session: Annotated[Session, Depends(get_session)]):
     user = session.exec(select(User).where(User.email == data.email)).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user does not exist")
@@ -141,7 +141,7 @@ async def user_email(data: Annotated[EmailType, Body()], session: Annotated[Sess
 
 
 @router.get("/verify-email", status_code=status.HTTP_200_OK, description="verifies user email from the provided token")
-async def verify_email(query: Annotated[TokenType, Query()],
+async def verify_email(query: Annotated[TokenSchema, Query()],
                        session: Annotated[Session, Depends(get_session)]):
     from insightly_api.main import redis_client
 
