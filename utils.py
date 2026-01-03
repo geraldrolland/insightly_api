@@ -334,10 +334,12 @@ def extract_data_from_csv(file: UploadFile):
 
 
 def extract_data_via_database_connection(db_type: str, username: str, password: str, database_name: str, host: str, query: str):
-    db_url = generate_db_url(db_type, username, password, database_name, host)
-    
     from sqlalchemy import create_engine
+    
+    MAX_ROWS = 10_000
+    MAX_FILE_SIZE = 5 * 1024 * 1024   # 5MB
 
+    db_url = generate_db_url(db_type, username, password, database_name, host)
     engine = create_engine(db_url)
     with engine.connect() as connection:
         data = connection.execute(query).fetchall()
@@ -346,9 +348,12 @@ def extract_data_via_database_connection(db_type: str, username: str, password: 
         else:
             columns = data[0].keys()
             data_dicts = [dict(zip(columns, row)) for row in data]
-            if len(data_dicts) > 10_000:
+            if len(data_dicts) > MAX_ROWS:
                 raise ValueError("number of rows exceeds the maximum allowed limit")
+            if len(str(data_dicts)) > MAX_FILE_SIZE:
+                raise ValueError("file size exceeds the maximum allowed limit")
             file_name = ingest_data_to_csv(data_dicts)
+            
             return file_name
 
 def generate_db_url(db_type: str, username: str, password: str, database_name: str, host: str) -> str:
