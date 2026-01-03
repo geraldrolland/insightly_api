@@ -12,7 +12,8 @@ from insightly_api.core.settings import settings
 from ua_parser import user_agent_parser
 from fastapi import UploadFile
 import pandas as pd
-
+from typing import List, Dict, Any
+from collections import defaultdict
 
 
 
@@ -365,3 +366,31 @@ def generate_db_url(db_type: str, username: str, password: str, database_name: s
         return f"sqlite:///{database_name}"
     else:
         raise ValueError("unsupported database type")
+
+def infer_schema(data: List[Dict[str, Any]]):
+    schema = defaultdict(dict)
+    for col in data[0].keys():
+        values = [row.get(col) for row in data]
+        # Determine type
+        if all(isinstance(v, int) or (isinstance(v, str) and v.isdigit()) for v in values if v not in [None, ""]):
+            col_type = "int"
+        elif all(isinstance(v, float) or (isinstance(v, str) and v.replace(".", "", 1).isdigit()) for v in values if v not in [None, ""]):
+            col_type = "float"
+        else:
+            col_type = "str"
+        # Determine if nullable
+        nullable = any(v in [None, ""] for v in values)
+        schema[col] = {"type": col_type, "nullable": nullable}
+    return dict(schema)
+"""
+data = [
+    {"name": "Alice", "age": "25", "email": "alice@test.com"},
+    {"name": "Bob", "age": "30", "email": "bob@test.com"}
+]
+
+{
+  "name": {"type": "str", "nullable": False},
+  "age": {"type": "int", "nullable": False},
+  "email": {"type": "str", "nullable": False}
+}
+"""
